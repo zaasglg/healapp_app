@@ -36,6 +36,19 @@ class NotFoundException extends ApiException {
   const NotFoundException(super.message, [super.statusCode]);
 }
 
+/// Ошибка конфликта (409) — ресурс уже существует
+class ConflictException extends ApiException {
+  final Map<String, dynamic>? responseData;
+
+  const ConflictException(String message, {this.responseData, int? statusCode})
+    : super(message, statusCode);
+
+  /// Получить значение из данных ответа
+  T? getData<T>(String key) {
+    return responseData?[key] as T?;
+  }
+}
+
 /// Ошибка валидации Laravel (422)
 class ValidationException extends ApiException {
   final Map<String, List<String>> errors;
@@ -152,6 +165,12 @@ class ApiExceptionHandler {
         return ForbiddenException(message, statusCode);
       case 404:
         return NotFoundException(message, statusCode);
+      case 409:
+        return ConflictException(
+          message,
+          responseData: data is Map<String, dynamic> ? data : null,
+          statusCode: statusCode,
+        );
       case 500:
       case 502:
       case 503:

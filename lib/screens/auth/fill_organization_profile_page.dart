@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import '../../config/app_config.dart';
 import '../../bloc/organization/organization_bloc.dart';
 import '../../bloc/organization/organization_event.dart';
 import '../../bloc/organization/organization_state.dart';
+import '../../bloc/auth/auth_bloc.dart';
+import '../../bloc/auth/auth_state.dart';
+import '../../utils/app_logger.dart';
 
 class FillOrganizationProfilePage extends StatefulWidget {
   const FillOrganizationProfilePage({super.key});
@@ -20,14 +22,24 @@ class FillOrganizationProfilePage extends StatefulWidget {
 class _FillOrganizationProfilePageState
     extends State<FillOrganizationProfilePage> {
   final _formKey = GlobalKey<FormState>();
-  final MaskTextInputFormatter _phoneMask = MaskTextInputFormatter(
-    mask: '+7 (###) ###-##-##',
-    filter: {"#": RegExp(r'\d')},
-  );
 
-  String _organizationName = '';
-  String _phone = '';
-  String _address = '';
+  // Используем контроллеры вместо переменных с onSaved
+  late TextEditingController _organizationNameController;
+  late TextEditingController _addressController;
+
+  @override
+  void initState() {
+    super.initState();
+    _organizationNameController = TextEditingController();
+    _addressController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _organizationNameController.dispose();
+    _addressController.dispose();
+    super.dispose();
+  }
 
   InputDecoration _inputDecoration(String hint) {
     return InputDecoration(
@@ -52,15 +64,21 @@ class _FillOrganizationProfilePageState
 
   void _submit() {
     if (_formKey.currentState?.validate() ?? false) {
-      _formKey.currentState?.save();
-      final phone = _phoneMask.getUnmaskedText();
+      // Получаем телефон из AuthBloc (введённый при регистрации)
+      final authState = context.read<AuthBloc>().state;
+      String phone = '';
+      if (authState is AuthAuthenticated) {
+        phone = authState.user.phone;
+      }
+
+      final name = _organizationNameController.text.trim();
+      final address = _addressController.text.trim();
+
+      log.d('Отправка данных организации:');
+      log.d('name: $name, phone: $phone, address: $address');
 
       context.read<OrganizationBloc>().add(
-        UpdateOrganizationRequested(
-          name: _organizationName,
-          phone: phone,
-          address: _address,
-        ),
+        UpdateOrganizationRequested(name: name, phone: phone, address: address),
       );
     }
   }
@@ -78,9 +96,9 @@ class _FillOrganizationProfilePageState
               behavior: SnackBarBehavior.floating,
             ),
           );
-          // Задержка перед переходом на главную
+          // Задержка перед переходом на страницу дневников
           Future.delayed(const Duration(milliseconds: 500), () {
-            context.go('/home');
+            context.go('/diaries');
           });
         }
 
@@ -130,7 +148,7 @@ class _FillOrganizationProfilePageState
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'Пансионат',
+                          'Организация',
                           textAlign: TextAlign.center,
                           style: GoogleFonts.firaSans(
                             fontSize: 14,
@@ -151,6 +169,7 @@ class _FillOrganizationProfilePageState
                               ),
                               const SizedBox(height: 8),
                               TextFormField(
+                                controller: _organizationNameController,
                                 decoration: _inputDecoration(
                                   'Введите название организации',
                                 ),
@@ -158,34 +177,6 @@ class _FillOrganizationProfilePageState
                                     (v == null || v.trim().isEmpty)
                                     ? 'Укажите название организации'
                                     : null,
-                                onSaved: (v) =>
-                                    _organizationName = (v ?? '').trim(),
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'Номер телефона',
-                                style: GoogleFonts.firaSans(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              TextFormField(
-                                keyboardType: TextInputType.phone,
-                                decoration: _inputDecoration('Номер телефона'),
-                                inputFormatters: [_phoneMask],
-                                validator: (v) =>
-                                    (_phoneMask.getUnmaskedText().length != 10)
-                                    ? 'Введите корректный номер телефона'
-                                    : null,
-                                onSaved: (v) => _phone = (v ?? '').trim(),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                'Номер телефона нужен для связи с поддержкой в WhatsApp',
-                                style: GoogleFonts.firaSans(
-                                  fontSize: 12,
-                                  color: Colors.grey.shade600,
-                                ),
                               ),
                               const SizedBox(height: 16),
                               Text(
@@ -196,6 +187,7 @@ class _FillOrganizationProfilePageState
                               ),
                               const SizedBox(height: 8),
                               TextFormField(
+                                controller: _addressController,
                                 decoration: _inputDecoration(
                                   'Введите адрес места нахождения организации',
                                 ),
@@ -204,7 +196,6 @@ class _FillOrganizationProfilePageState
                                     (v == null || v.trim().isEmpty)
                                     ? 'Укажите адрес организации'
                                     : null,
-                                onSaved: (v) => _address = (v ?? '').trim(),
                               ),
                               const SizedBox(height: 24),
                               BlocBuilder<OrganizationBloc, OrganizationState>(

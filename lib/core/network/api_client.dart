@@ -3,14 +3,37 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'api_exceptions.dart';
+import '../../utils/app_logger.dart';
 
 /// Конфигурация API клиента
 class ApiConfig {
-  static const String baseUrl = 'http://10.0.2.2:8000/api/v1';
+  static const String baseUrl = 'https://api.sistemizdorovya.ru/api/v1';
+  static const String baseDomain = 'https://api.sistemizdorovya.ru';
   static const String tokenKey = 'auth_token';
   static const Duration connectTimeout = Duration(seconds: 30);
   static const Duration receiveTimeout = Duration(seconds: 30);
   static const Duration sendTimeout = Duration(seconds: 30);
+
+  /// Преобразует относительный путь в полный URL
+  /// Например: /storage/avatars/1/image.jpg -> https://api.sistemizdorovya.ru/storage/avatars/1/image.jpg
+  static String getFullUrl(String? relativePath) {
+    if (relativePath == null || relativePath.isEmpty) {
+      return '';
+    }
+
+    // Если путь уже является полным URL, возвращаем как есть
+    if (relativePath.startsWith('http://') ||
+        relativePath.startsWith('https://')) {
+      return relativePath;
+    }
+
+    // Убираем начальный слеш, если он есть
+    final cleanPath = relativePath.startsWith('/')
+        ? relativePath.substring(1)
+        : relativePath;
+
+    return '$baseDomain/$cleanPath';
+  }
 }
 
 /// Callback для уведомления о необходимости выхода из системы
@@ -58,14 +81,24 @@ class ApiClient {
     ProgressCallback? onReceiveProgress,
   }) async {
     try {
-      return await _dio.get<T>(
+      final fullUrl = '${_dio.options.baseUrl}$path';
+      log.d('ApiClient: GET запрос к $fullUrl');
+      final response = await _dio.get<T>(
         path,
         queryParameters: queryParameters,
         options: options,
         cancelToken: cancelToken,
         onReceiveProgress: onReceiveProgress,
       );
+      log.d('ApiClient: GET успешен, статус: ${response.statusCode}');
+      return response;
     } on DioException catch (e) {
+      log.e(
+        'ApiClient: DioException при GET $path: ${e.type}, message: ${e.message}',
+      );
+      if (e.error != null) {
+        log.e('ApiClient: Underlying error: ${e.error}');
+      }
       throw ApiExceptionHandler.handleDioException(e);
     }
   }
@@ -159,6 +192,39 @@ class ApiClient {
         data: data,
         queryParameters: queryParameters,
         options: options,
+        cancelToken: cancelToken,
+      );
+    } on DioException catch (e) {
+      throw ApiExceptionHandler.handleDioException(e);
+    }
+  }
+
+  /// POST запрос с загрузкой файла (multipart/form-data)
+  Future<Response<T>> postFile<T>(
+    String path, {
+    required File file,
+    required String fieldName,
+    Map<String, dynamic>? additionalFields,
+    ProgressCallback? onSendProgress,
+    CancelToken? cancelToken,
+  }) async {
+    try {
+      final fileName = file.path.split('/').last;
+      final formData = FormData.fromMap({
+        fieldName: await MultipartFile.fromFile(file.path, filename: fileName),
+        if (additionalFields != null) ...additionalFields,
+      });
+
+      return await _dio.post<T>(
+        path,
+        data: formData,
+        options: Options(
+          headers: {
+            'Accept': 'application/json',
+            // Content-Type с boundary будет установлен автоматически Dio
+          },
+        ),
+        onSendProgress: onSendProgress,
         cancelToken: cancelToken,
       );
     } on DioException catch (e) {

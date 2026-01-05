@@ -1,5 +1,7 @@
+import 'dart:io';
 import '../core/network/api_client.dart';
 import '../core/network/api_exceptions.dart';
+import '../utils/app_logger.dart';
 
 // Импортируем глобальный экземпляр
 final _defaultApiClient = apiClient;
@@ -7,55 +9,101 @@ final _defaultApiClient = apiClient;
 /// Модель пользователя
 class User {
   final String id;
-  final String? name;
+  final String? firstName;
+  final String? lastName;
+  final String? middleName;
   final String? email;
   final String phone;
   final String? accountType;
   final List<String>? roles;
+  final Map<String, dynamic>? organization;
   final Map<String, dynamic>? additionalData;
+  final String? avatar;
 
   User({
     required this.id,
-    this.name,
+    this.firstName,
+    this.lastName,
+    this.middleName,
     this.email,
     required this.phone,
     this.accountType,
     this.roles,
+    this.organization,
     this.additionalData,
+    this.avatar,
   });
+
+  /// Полное имя пользователя
+  String? get fullName {
+    final parts = <String>[];
+    if (firstName != null && firstName!.isNotEmpty) parts.add(firstName!);
+    if (lastName != null && lastName!.isNotEmpty) parts.add(lastName!);
+    if (middleName != null && middleName!.isNotEmpty) parts.add(middleName!);
+    return parts.isNotEmpty ? parts.join(' ') : null;
+  }
+
+  /// Для обратной совместимости
+  String? get name => fullName;
 
   factory User.fromJson(Map<String, dynamic> json) {
     // Извлекаем роли из разных возможных мест в ответе
     List<String>? roles;
+
+    // API может возвращать 'roles' (массив) или 'role' (строка)
     final rolesData = json['roles'];
+    final roleData = json['role'];
+
+    // Логируем для отладки
+    log.d(
+      'User.fromJson: accountType=${json['account_type']}, roles=$rolesData, role=$roleData',
+    );
+
     if (rolesData is List) {
+      // Массив ролей (для сотрудников организации)
       roles = rolesData.map((r) {
         if (r is Map) {
           return r['name']?.toString() ?? '';
         }
         return r.toString();
       }).toList();
+    } else if (roleData is String && roleData.isNotEmpty) {
+      // Одна роль в виде строки (для клиентов)
+      roles = [roleData];
+    }
+
+    // Извлекаем организацию
+    Map<String, dynamic>? organization;
+    if (json['organization'] is Map<String, dynamic>) {
+      organization = json['organization'] as Map<String, dynamic>;
     }
 
     return User(
       id: json['id']?.toString() ?? '',
-      name: json['name'] as String?,
+      firstName: json['first_name'] as String?,
+      lastName: json['last_name'] as String?,
+      middleName: json['middle_name'] as String?,
       email: json['email'] as String?,
       phone: json['phone']?.toString() ?? '',
       accountType: json['account_type'] as String?,
       roles: roles,
+      organization: organization,
       additionalData: json,
+      avatar: json['avatar'] as String?,
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
       'id': id,
-      'name': name,
+      'first_name': firstName,
+      'last_name': lastName,
+      'middle_name': middleName,
       'email': email,
       'phone': phone,
       'account_type': accountType,
       'roles': roles,
+      'organization': organization,
       ...?additionalData,
     };
   }
@@ -63,6 +111,11 @@ class User {
   /// Проверить, есть ли у пользователя определённая роль
   bool hasRole(String role) {
     return roles?.contains(role) ?? false;
+  }
+
+  @override
+  String toString() {
+    return 'User(id: $id, phone: $phone, name: $fullName, accountType: $accountType, roles: $roles)';
   }
 }
 
@@ -226,17 +279,128 @@ class AuthRepository {
 
       final data = response.data as Map<String, dynamic>;
 
-      // Извлекаем данные пользователя
-      final userData = data['user'] as Map<String, dynamic>?;
+      // Проверяем формат ответа - может быть {'user': {...}} или напрямую данные пользователя
+      Map<String, dynamic>? userData;
+      if (data.containsKey('user') && data['user'] is Map<String, dynamic>) {
+        userData = data['user'] as Map<String, dynamic>;
+      } else if (data.containsKey('id')) {
+        // Данные пользователя возвращаются напрямую
+        userData = data;
+      }
+
       if (userData == null) {
         throw const ServerException('Данные пользователя не получены');
       }
+
+      // Логируем данные организации для отладки
+      final org = userData['organization'];
+      log.d('Данные организации из /auth/me: $org');
 
       return User.fromJson(userData);
     } on ApiException {
       rethrow;
     } catch (e) {
       throw ServerException('Ошибка при получении данных: ${e.toString()}');
+    }
+  }
+
+  /// Загрузить аватар пользователя
+  ///
+  /// [avatarFile] - файл изображения для загрузки
+  ///
+  /// Возвращает [User] с обновленными данными, включая URL аватара
+  /// Выбрасывает [ApiException] при ошибке
+  Future<User> uploadAvatar(File avatarFile) async {
+    try {
+      log.d('Начало загрузки аватара: ${avatarFile.path}');
+
+      final response = await _apiClient.postFile(
+        '/auth/avatar',
+        file: avatarFile,
+        fieldName: 'avatar',
+        onSendProgress: (sent, total) {
+          final progress = (sent / total * 100).toStringAsFixed(1);
+          log.d('Прогресс загрузки: $progress%');
+        },
+      );
+
+      final data = response.data as Map<String, dynamic>;
+
+      // Проверяем формат ответа - может быть {'user': {...}} или напрямую данные пользователя
+      Map<String, dynamic>? userData;
+      if (data.containsKey('user') && data['user'] is Map<String, dynamic>) {
+        userData = data['user'] as Map<String, dynamic>;
+      } else if (data.containsKey('id')) {
+        // Данные пользователя возвращаются напрямую
+        userData = data;
+      }
+
+      if (userData == null) {
+        throw const ServerException('Данные пользователя не получены');
+      }
+
+      log.i('Аватар успешно загружен. URL: ${userData['avatar']}');
+
+      return User.fromJson(userData);
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      throw ServerException('Ошибка при загрузке аватара: ${e.toString()}');
+    }
+  }
+
+  /// Обновить профиль пользователя
+  ///
+  /// [firstName] - имя
+  /// [lastName] - фамилия
+  /// [city] - город (опционально)
+  ///
+  /// Возвращает [User] с обновленными данными
+  /// Выбрасывает [ApiException] при ошибке
+  Future<User> updateProfile({
+    required String firstName,
+    required String lastName,
+    String? city,
+  }) async {
+    try {
+      log.d(
+        'Обновление профиля: firstName=$firstName, lastName=$lastName, city=$city',
+      );
+
+      final data = <String, dynamic>{
+        'first_name': firstName,
+        'last_name': lastName,
+      };
+
+      if (city != null && city.isNotEmpty) {
+        data['city'] = city;
+      }
+
+      final response = await _apiClient.patch('/auth/profile', data: data);
+
+      final responseData = response.data as Map<String, dynamic>;
+
+      // Проверяем формат ответа - может быть {'user': {...}} или напрямую данные пользователя
+      Map<String, dynamic>? userData;
+      if (responseData.containsKey('user') &&
+          responseData['user'] is Map<String, dynamic>) {
+        userData = responseData['user'] as Map<String, dynamic>;
+      } else if (responseData.containsKey('id')) {
+        // Данные пользователя возвращаются напрямую
+        userData = responseData;
+      }
+
+      if (userData == null) {
+        throw const ServerException('Данные пользователя не получены');
+      }
+
+      log.i('Профиль успешно обновлён');
+
+      return User.fromJson(userData);
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      throw ServerException('Ошибка при обновлении профиля: ${e.toString()}');
     }
   }
 }

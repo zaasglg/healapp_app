@@ -1,11 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shimmer/shimmer.dart';
+import 'package:toastification/toastification.dart';
 import '../config/app_config.dart';
 import '../utils/app_icons.dart';
+import '../repositories/patient_repository.dart';
+import '../repositories/diary_repository.dart';
+import '../bloc/diary/diary_bloc.dart';
+import '../bloc/diary/diary_event.dart';
+import '../bloc/diary/diary_state.dart';
 
 class SelectIndicatorsPage extends StatefulWidget {
-  const SelectIndicatorsPage({super.key});
+  final Patient? patient;
+
+  const SelectIndicatorsPage({super.key, this.patient});
   static const String routeName = '/select-indicators';
 
   @override
@@ -15,6 +25,17 @@ class SelectIndicatorsPage extends StatefulWidget {
 class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
   final Set<String> _pinnedIndicators = {};
   final Set<String> _allIndicators = {};
+  bool _isLoading = false;
+  bool _isInitialLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // Убрана искусственная задержка для быстрой загрузки
+    _isInitialLoading = false;
+  }
+
+  Patient? get _patient => widget.patient;
 
   void _openPinnedIndicatorsDialog() {
     showDialog(
@@ -44,6 +65,8 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
             'Чтобы выбрать индивидуальные параметры которые важно отслеживать - нажмите на него и после выбора всех необходимых нажмите на кнопку выбрать',
         maxSelection: null,
         selectedIndicators: _allIndicators,
+        blockedIndicators:
+            _pinnedIndicators, // Блокируем показатели, выбранные в закрепленных
         onSelectionChanged: (selected) {
           setState(() {
             _allIndicators.clear();
@@ -54,223 +77,415 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
     );
   }
 
-  void _createDiary() {
-    // Navigate to health diary page
-    context.pushReplacement('/health-diary');
+  /// Преобразовать название индикатора в ключ API
+  String _indicatorToKey(String indicator) {
+    final Map<String, String> mapping = {
+      'Температура': 'temperature',
+      'Артериальное давление': 'blood_pressure',
+      'Частота дыхания': 'respiratory_rate',
+      'Уровень боли': 'pain_level',
+      'Сатурация': 'oxygen_saturation',
+      'Уровень сахара в крови': 'blood_sugar',
+      'Прогулка': 'walk',
+      'Когнитивные игры': 'cognitive_games',
+      'Смена подгузников': 'diaper_change',
+      'Гигиена': 'hygiene',
+      'Увлажнение кожи': 'skin_moisturizing',
+      'Прием пищи': 'meal',
+      'Прием лекарств': 'medication',
+      'Прием витаминов': 'vitamins',
+      'Сон': 'sleep',
+      'Выпито/выделено и цвет мочи': 'urine',
+      'Дефекация': 'defecation',
+      'Тошнота': 'nausea',
+      'Одышка': 'dyspnea',
+      'Кашель': 'cough',
+      'Икота': 'hiccup',
+      'Рвота': 'vomiting',
+      'Зуд': 'itching',
+      'Сухость во рту': 'dry_mouth',
+      'Нарушение вкуса': 'taste_disorder',
+    };
+    return mapping[indicator] ?? indicator.toLowerCase().replaceAll(' ', '_');
+  }
+
+  void _createDiary(BuildContext blocContext) {
+    if (_patient == null) {
+      toastification.show(
+        context: context,
+        type: ToastificationType.error,
+        style: ToastificationStyle.fillColored,
+        title: const Text('Ошибка'),
+        description: const Text('Пациент не выбран'),
+        autoCloseDuration: const Duration(seconds: 3),
+      );
+      return;
+    }
+
+    // Логируем patient_id
+    debugPrint(
+      '🔍 Создание дневника для пациента: ${_patient!.fullName}, ID: ${_patient!.id}',
+    );
+
+    // Преобразуем выбранные индикаторы в PinnedParameter
+    final pinnedParameters = _pinnedIndicators.map((indicator) {
+      return PinnedParameter(
+        key: _indicatorToKey(indicator),
+        intervalMinutes: 60, // По умолчанию каждый час
+      );
+    }).toList();
+
+    setState(() => _isLoading = true);
+
+    // Создаём дневник через BLoC
+    blocContext.read<DiaryBloc>().add(
+      CreateDiary(
+        patientId: _patient!.id,
+        pinnedParameters: pinnedParameters,
+        settings: _allIndicators.isNotEmpty
+            ? {'all_indicators': _allIndicators.map(_indicatorToKey).toList()}
+            : null,
+      ),
+    );
+  }
+
+  void _handleDiaryState(BuildContext context, DiaryState state) {
+    if (state is DiaryCreatedState) {
+      setState(() => _isLoading = false);
+      toastification.show(
+        context: context,
+        type: ToastificationType.success,
+        style: ToastificationStyle.fillColored,
+        title: const Text('Успешно'),
+        description: const Text('Дневник здоровья создан'),
+        autoCloseDuration: const Duration(seconds: 2),
+      );
+      // Переходим на страницу дневника с правильными параметрами
+      context.pushReplacement(
+        '/health-diary/${state.diary.id}/${state.diary.patientId}',
+      );
+    } else if (state is DiaryConflict) {
+      setState(() => _isLoading = false);
+      toastification.show(
+        context: context,
+        type: ToastificationType.warning,
+        style: ToastificationStyle.fillColored,
+        title: const Text('Дневник существует'),
+        description: Text(state.message),
+        autoCloseDuration: const Duration(seconds: 3),
+      );
+      // Переходим на страницу существующего дневника
+      // Используем existingDiaryId и patientId из _patient
+      if (_patient != null) {
+        context.pushReplacement(
+          '/health-diary/${state.existingDiaryId}/${_patient!.id}',
+        );
+      }
+    } else if (state is DiaryError) {
+      setState(() => _isLoading = false);
+      toastification.show(
+        context: context,
+        type: ToastificationType.error,
+        style: ToastificationStyle.fillColored,
+        title: const Text('Ошибка'),
+        description: Text(state.message),
+        autoCloseDuration: const Duration(seconds: 3),
+      );
+    }
+  }
+
+  Widget _buildShimmerContent() {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey.shade300,
+      highlightColor: Colors.grey.shade100,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Info box shimmer
+          Container(
+            height: 80,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Pinned indicators section shimmer
+          Container(
+            height: 180,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ),
+          const SizedBox(height: 16),
+          // All indicators section shimmer
+          Container(
+            height: 160,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F8),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: Image.asset(
-            AppIcons.back,
-            width: 24,
-            height: 24,
-            fit: BoxFit.contain,
-          ),
-          onPressed: () => context.pop(),
-        ),
-        title: Text(
-          'Выберите показатели',
-          style: GoogleFonts.firaSans(
-            color: Colors.grey.shade900,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Info box
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade200,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        'Для закрепленных показателей лучше выбирать показатели, которые нужно замерять через определенный промежуток времени: давление, пульс, температура и др.',
-                        style: GoogleFonts.firaSans(
-                          fontSize: 14,
-                          color: Colors.grey.shade800,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Pinned indicators section
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            AppConfig.primaryColor,
-                            AppConfig.primaryColor.withOpacity(0.8),
-                          ],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 12,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text(
-                            'Закрепленные показатели',
-                            style: GoogleFonts.firaSans(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Выберите до 3-х показателей для быстрого доступа с таймером заполнения',
-                            style: GoogleFonts.firaSans(
-                              fontSize: 13,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              elevation: 0,
-                            ),
-                            onPressed: _openPinnedIndicatorsDialog,
-                            child: Text(
-                              'Выбрать (${_pinnedIndicators.length}/3)',
-                              style: GoogleFonts.firaSans(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: AppConfig.primaryColor,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // All indicators section
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.06),
-                            blurRadius: 12,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text(
-                            'Все показатели',
-                            style: GoogleFonts.firaSans(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                              color: Colors.grey.shade900,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Выберите остальные показатели для отслеживания',
-                            style: GoogleFonts.firaSans(
-                              fontSize: 13,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          OutlinedButton(
-                            style: OutlinedButton.styleFrom(
-                              side: BorderSide(color: AppConfig.primaryColor),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            onPressed: _openAllIndicatorsDialog,
-                            child: Text(
-                              'Выбрать (${_allIndicators.length})',
-                              style: GoogleFonts.firaSans(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: AppConfig.primaryColor,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+    return BlocProvider(
+      create: (context) => DiaryBloc(),
+      child: BlocListener<DiaryBloc, DiaryState>(
+        listener: _handleDiaryState,
+        child: Scaffold(
+          backgroundColor: const Color(0xFFF7F7F8),
+          appBar: AppBar(
+            backgroundColor: Colors.white,
+            elevation: 0,
+            leading: IconButton(
+              icon: Image.asset(
+                AppIcons.back,
+                width: 24,
+                height: 24,
+                fit: BoxFit.contain,
+              ),
+              onPressed: () => context.pop(),
+            ),
+            title: Text(
+              'Выберите показатели',
+              style: GoogleFonts.firaSans(
+                color: Colors.grey.shade900,
+                fontWeight: FontWeight.w700,
               ),
             ),
-            // Create diary button
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: SizedBox(
-                width: double.infinity,
-                child: InkWell(
-                  onTap: _createDiary,
-                  borderRadius: BorderRadius.circular(14),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          AppConfig.primaryColor,
-                          AppConfig.primaryColor.withOpacity(0.8),
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(14),
+          ),
+          body: SafeArea(
+            child: Column(
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
                     ),
-                    child: Text(
-                      'Создать дневник',
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.firaSans(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
+                    child: _isInitialLoading
+                        ? _buildShimmerContent()
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // Info box
+                              Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade200,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  'Для закрепленных показателей лучше выбирать показатели, которые нужно замерять через определенный промежуток времени: давление, пульс, температура и др.',
+                                  style: GoogleFonts.firaSans(
+                                    fontSize: 14,
+                                    color: Colors.grey.shade800,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+
+                              // Pinned indicators section
+                              Container(
+                                padding: const EdgeInsets.all(20),
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      AppConfig.primaryColor,
+                                      AppConfig.primaryColor.withOpacity(0.8),
+                                    ],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                  borderRadius: BorderRadius.circular(16),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.1),
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    Text(
+                                      'Закрепленные показатели',
+                                      style: GoogleFonts.firaSans(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w800,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Выберите до 3-х показателей для быстрого доступа с таймером заполнения',
+                                      style: GoogleFonts.firaSans(
+                                        fontSize: 13,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    ElevatedButton(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 12,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                        elevation: 0,
+                                      ),
+                                      onPressed: _openPinnedIndicatorsDialog,
+                                      child: Text(
+                                        'Выбрать (${_pinnedIndicators.length}/3)',
+                                        style: GoogleFonts.firaSans(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppConfig.primaryColor,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+
+                              // All indicators section
+                              Container(
+                                padding: const EdgeInsets.all(20),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(16),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.06),
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    Text(
+                                      'Все показатели',
+                                      style: GoogleFonts.firaSans(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w800,
+                                        color: Colors.grey.shade900,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Выберите остальные показатели для отслеживания',
+                                      style: GoogleFonts.firaSans(
+                                        fontSize: 13,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    OutlinedButton(
+                                      style: OutlinedButton.styleFrom(
+                                        side: BorderSide(
+                                          color: AppConfig.primaryColor,
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 12,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                      ),
+                                      onPressed: _openAllIndicatorsDialog,
+                                      child: Text(
+                                        'Выбрать (${_allIndicators.length})',
+                                        style: GoogleFonts.firaSans(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppConfig.primaryColor,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+                // Create diary button
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: Builder(
+                      builder: (blocContext) {
+                        return InkWell(
+                          onTap: _isLoading
+                              ? null
+                              : () => _createDiary(blocContext),
+                          borderRadius: BorderRadius.circular(14),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: _isLoading
+                                    ? [Colors.grey, Colors.grey.shade400]
+                                    : [
+                                        AppConfig.primaryColor,
+                                        AppConfig.primaryColor.withOpacity(0.8),
+                                      ],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: _isLoading
+                                ? const Center(
+                                    child: SizedBox(
+                                      height: 20,
+                                      width: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                              Colors.white,
+                                            ),
+                                      ),
+                                    ),
+                                  )
+                                : Text(
+                                    'Создать дневник',
+                                    textAlign: TextAlign.center,
+                                    style: GoogleFonts.firaSans(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ),
-              ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -282,6 +497,8 @@ class _IndicatorsSelectionDialog extends StatefulWidget {
   final String description;
   final int? maxSelection;
   final Set<String> selectedIndicators;
+  final Set<String>?
+  blockedIndicators; // Заблокированные показатели (из закрепленных)
   final Function(Set<String>) onSelectionChanged;
 
   const _IndicatorsSelectionDialog({
@@ -289,6 +506,7 @@ class _IndicatorsSelectionDialog extends StatefulWidget {
     required this.description,
     this.maxSelection,
     required this.selectedIndicators,
+    this.blockedIndicators,
     required this.onSelectionChanged,
   });
 
@@ -308,6 +526,12 @@ class _IndicatorsSelectionDialogState
       TextEditingController();
   final TextEditingController _symptomCustomController =
       TextEditingController();
+
+  // Кастомные показатели для каждой категории
+  final Set<String> _customCareIndicators = {};
+  final Set<String> _customPhysicalIndicators = {};
+  final Set<String> _customExcretionIndicators = {};
+  final Set<String> _customSymptomIndicators = {};
 
   @override
   void dispose() {
@@ -368,14 +592,8 @@ class _IndicatorsSelectionDialogState
       } else {
         if (widget.maxSelection != null &&
             _selectedIndicators.length >= widget.maxSelection!) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Можно выбрать не более ${widget.maxSelection} показателей',
-              ),
-              duration: const Duration(seconds: 2),
-            ),
-          );
+          // Показываем модальное окно с предупреждением
+          _showMaxSelectionDialog();
           return;
         }
         _selectedIndicators.add(indicator);
@@ -383,38 +601,105 @@ class _IndicatorsSelectionDialogState
     });
   }
 
+  void _showMaxSelectionDialog() {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.5),
+      builder: (context) => Dialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.info_outline, size: 48, color: AppConfig.primaryColor),
+              const SizedBox(height: 16),
+              Text(
+                'Достигнут лимит',
+                style: GoogleFonts.firaSans(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.grey.shade900,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Можно выбрать не более ${widget.maxSelection} показателей. Снимите выбор с одного из выбранных показателей, чтобы выбрать другой.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.firaSans(
+                  fontSize: 14,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppConfig.primaryColor,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 0,
+                  ),
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(
+                    'Понятно',
+                    style: GoogleFonts.firaSans(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _confirmSelection() {
     widget.onSelectionChanged(_selectedIndicators);
     Navigator.of(context).pop();
   }
 
-  void _addCustomIndicator(TextEditingController controller) {
+  void _addCustomIndicator(
+    TextEditingController controller,
+    Set<String> customSet,
+  ) {
     if (controller.text.trim().isNotEmpty) {
       final indicator = controller.text.trim();
       if (widget.maxSelection != null &&
           _selectedIndicators.length >= widget.maxSelection! &&
           !_selectedIndicators.contains(indicator)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Можно выбрать не более ${widget.maxSelection} показателей',
-            ),
-            duration: const Duration(seconds: 2),
-          ),
-        );
+        // Показываем модальное окно при попытке добавить кастомный показатель после достижения лимита
+        _showMaxSelectionDialog();
         return;
       }
       setState(() {
         _selectedIndicators.add(indicator);
+        customSet.add(indicator);
         controller.clear();
       });
     }
+  }
+
+  void _removeCustomIndicator(String indicator, Set<String> customSet) {
+    setState(() {
+      _selectedIndicators.remove(indicator);
+      customSet.remove(indicator);
+    });
   }
 
   Widget _buildIndicatorSection(
     String title,
     List<String> indicators,
     TextEditingController customController,
+    Set<String> customIndicators,
   ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -428,39 +713,141 @@ class _IndicatorsSelectionDialogState
           ),
         ),
         const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: indicators.map((indicator) {
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+            childAspectRatio: 2.5,
+          ),
+          itemCount: indicators.length,
+          itemBuilder: (context, index) {
+            final indicator = indicators[index];
             final isSelected = _selectedIndicators.contains(indicator);
+            final isBlocked =
+                widget.blockedIndicators != null &&
+                widget.blockedIndicators!.contains(indicator);
+            final isMaxReached =
+                widget.maxSelection != null &&
+                _selectedIndicators.length >= widget.maxSelection! &&
+                !isSelected;
+            final isDisabled = isBlocked || isMaxReached;
+
             return InkWell(
-              onTap: () => _toggleIndicator(indicator),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: isSelected ? AppConfig.primaryColor : Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: isSelected
-                        ? AppConfig.primaryColor
-                        : AppConfig.primaryColor.withOpacity(0.3),
+              onTap: isBlocked
+                  ? null // Заблокированные показатели не кликабельны
+                  : () {
+                      if (isMaxReached) {
+                        // Показываем модальное окно при попытке выбрать после достижения лимита
+                        _showMaxSelectionDialog();
+                      } else {
+                        _toggleIndicator(indicator);
+                      }
+                    },
+              child: Opacity(
+                opacity: isDisabled ? 0.4 : 1.0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
                   ),
-                ),
-                child: Text(
-                  indicator,
-                  style: GoogleFonts.firaSans(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isSelected ? Colors.white : Colors.grey.shade800,
+                  decoration: BoxDecoration(
+                    color: isBlocked
+                        ? Colors.grey.shade300
+                        : (isSelected ? AppConfig.primaryColor : Colors.white),
+                    borderRadius: BorderRadius.circular(100),
+                    border: Border.all(
+                      color: isBlocked
+                          ? Colors.grey.shade400
+                          : (isSelected
+                                ? AppConfig.primaryColor
+                                : AppConfig.primaryColor.withOpacity(0.3)),
+                      width: 1.5, // Увеличенная толщина границы
+                    ),
+                  ),
+                  child: Center(
+                    child: Text(
+                      indicator,
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.firaSans(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: isBlocked
+                            ? Colors.grey.shade600
+                            : (isSelected
+                                  ? Colors.white
+                                  : Colors.grey.shade800),
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ),
               ),
             );
-          }).toList(),
+          },
         ),
+        // Показываем кастомные показатели этой категории
+        if (customIndicators.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
+              childAspectRatio: 2.2,
+            ),
+            itemCount: customIndicators.length,
+            itemBuilder: (context, index) {
+              final indicator = customIndicators.elementAt(index);
+              return InkWell(
+                onTap: () =>
+                    _removeCustomIndicator(indicator, customIndicators),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppConfig.primaryColor,
+                    borderRadius: BorderRadius.circular(100),
+                    border: Border.all(
+                      color: AppConfig.primaryColor,
+                      width: 1.5, // Увеличенная толщина границы
+                    ),
+                  ),
+                  child: Center(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            indicator,
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.firaSans(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        const Icon(Icons.close, size: 18, color: Colors.white),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
         const SizedBox(height: 12),
         Row(
           children: [
@@ -468,7 +855,7 @@ class _IndicatorsSelectionDialogState
               child: TextFormField(
                 controller: customController,
                 decoration: InputDecoration(
-                  hintText: 'Добавить показатель не из списка',
+                  hintText: 'Добавить свой показатель',
                   filled: true,
                   fillColor: Colors.white,
                   border: OutlineInputBorder(
@@ -492,11 +879,16 @@ class _IndicatorsSelectionDialogState
                     vertical: 14,
                   ),
                 ),
+                onFieldSubmitted: (_) =>
+                    _addCustomIndicator(customController, customIndicators),
               ),
             ),
             const SizedBox(width: 8),
             InkWell(
-              onTap: () => _addCustomIndicator(customController),
+              onTap: () {
+                _addCustomIndicator(customController, customIndicators);
+                FocusScope.of(context).unfocus();
+              },
               child: Container(
                 width: 48,
                 height: 48,
@@ -543,11 +935,9 @@ class _IndicatorsSelectionDialogState
             // Header
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              decoration: BoxDecoration(
+              decoration: const BoxDecoration(
                 color: Colors.white,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(16),
-                ),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
               ),
               child: Row(
                 children: [
@@ -555,8 +945,8 @@ class _IndicatorsSelectionDialogState
                     child: Text(
                       widget.title,
                       style: GoogleFonts.firaSans(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
                         color: AppConfig.primaryColor,
                       ),
                     ),
@@ -579,6 +969,7 @@ class _IndicatorsSelectionDialogState
                   children: [
                     Text(
                       widget.description,
+                      textAlign: TextAlign.center,
                       style: GoogleFonts.firaSans(
                         fontSize: 13,
                         color: Colors.grey.shade700,
@@ -589,21 +980,25 @@ class _IndicatorsSelectionDialogState
                       'Показатели ухода',
                       _careIndicators,
                       _careCustomController,
+                      _customCareIndicators,
                     ),
                     _buildIndicatorSection(
                       'Физические показатели',
                       _physicalIndicators,
                       _physicalCustomController,
+                      _customPhysicalIndicators,
                     ),
                     _buildIndicatorSection(
                       'Выделение мочи и кала',
                       _excretionIndicators,
                       _excretionCustomController,
+                      _customExcretionIndicators,
                     ),
                     _buildIndicatorSection(
                       'Тягостные симптомы',
                       _symptomIndicators,
                       _symptomCustomController,
+                      _customSymptomIndicators,
                     ),
                   ],
                 ),

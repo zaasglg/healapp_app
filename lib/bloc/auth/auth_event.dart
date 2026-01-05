@@ -64,6 +64,11 @@ class AuthCheckStatus extends AuthEvent {
   const AuthCheckStatus();
 }
 
+/// Событие обновления данных пользователя с сервера
+class AuthRefreshUser extends AuthEvent {
+  const AuthRefreshUser();
+}
+
 /// Событие подтверждения телефона по SMS-коду
 class AuthVerifyPhoneRequested extends AuthEvent {
   final String phone;
@@ -73,4 +78,30 @@ class AuthVerifyPhoneRequested extends AuthEvent {
 
   @override
   List<Object?> get props => [phone, code];
+}
+
+/// Событие загрузки аватара пользователя
+class AuthUploadAvatarRequested extends AuthEvent {
+  final String filePath;
+
+  const AuthUploadAvatarRequested({required this.filePath});
+
+  @override
+  List<Object?> get props => [filePath];
+}
+
+/// Событие обновления профиля пользователя (для частной сиделки)
+class AuthUpdateProfileRequested extends AuthEvent {
+  final String firstName;
+  final String lastName;
+  final String? city;
+
+  const AuthUpdateProfileRequested({
+    required this.firstName,
+    required this.lastName,
+    this.city,
+  });
+
+  @override
+  List<Object?> get props => [firstName, lastName, city];
 }

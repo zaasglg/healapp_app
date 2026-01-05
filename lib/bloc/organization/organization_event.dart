@@ -7,6 +7,12 @@ abstract class OrganizationEvent extends Equatable {
   List<Object?> get props => [];
 }
 
+/// Событие загрузки данных организации
+class LoadOrganizationRequested extends OrganizationEvent {
+  const LoadOrganizationRequested();
+}
+
+/// Событие обновления данных организации
 class UpdateOrganizationRequested extends OrganizationEvent {
   final String name;
   final String phone;

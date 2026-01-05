@@ -1,0 +1,45 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "healapp_mobile",
+            "request": "launch",
+            "type": "dart"
+        },
+        {
+            "name": "healapp_mobile (profile mode)",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "profile"
+        },
+        {
+            "name": "healapp_mobile (release mode)",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "release"
+        },
+        {
+            "name": "snapshot",
+            "cwd": ".yoyo\\snapshot",
+            "request": "launch",
+            "type": "dart"
+        },
+        {
+            "name": "snapshot (profile mode)",
+            "cwd": ".yoyo\\snapshot",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "profile"
+        },
+        {
+            "name": "snapshot (release mode)",
+            "cwd": ".yoyo\\snapshot",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "release"
+        }
+    ]
+}

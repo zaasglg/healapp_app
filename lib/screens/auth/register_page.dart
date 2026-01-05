@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
+import 'package:toastification/toastification.dart';
 import '../../config/app_config.dart';
 import '../../bloc/auth/auth_bloc.dart';
 import '../../bloc/auth/auth_event.dart';
@@ -61,6 +62,18 @@ class _RegisterPageState extends State<RegisterPage> {
     }
   }
 
+  /// Получить читаемое название роли
+  String _getRoleName(Role role) {
+    switch (role) {
+      case Role.nursingHome:
+        return 'Пансионат';
+      case Role.agency:
+        return 'Патронажное агентство';
+      case Role.privateCaregiver:
+        return 'Частная сиделка';
+    }
+  }
+
   void _submit() {
     if (_formKey.currentState?.validate() ?? false) {
       if (_selectedRole == null) {
@@ -97,25 +110,32 @@ class _RegisterPageState extends State<RegisterPage> {
   Widget build(BuildContext context) {
     return BlocListener<AuthBloc, AuthState>(
       listener: (context, state) {
-        // Навигация на страницу подтверждения SMS после регистрации
-        if (state is AuthAwaitingSmsVerification) {
-          context.push('/verify-code/${state.phone}');
-        }
+        if (ModalRoute.of(context)?.isCurrent ?? false) {
+          // Навигация на страницу подтверждения SMS после регистрации
+          if (state is AuthAwaitingSmsVerification) {
+            context.push('/verify-code/${state.phone}');
+          }
 
-        // Навигация при успешной авторизации (после подтверждения)
-        if (state is AuthAuthenticated) {
-          context.go('/home');
-        }
+          // Навигация при успешной авторизации (после подтверждения)
+          if (state is AuthAuthenticated) {
+            context.go('/home');
+          }
 
-        // Показ ошибки при неудаче
-        if (state is AuthFailure) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
+          // Показ ошибки при неудаче
+          if (state is AuthFailure) {
+            toastification.show(
+              context: context,
+              type: ToastificationType.error,
+              style: ToastificationStyle.fillColored,
+              title: const Text('Ошибка'),
+              description: Text(state.message),
+              alignment: Alignment.topCenter,
+              autoCloseDuration: const Duration(seconds: 4),
+              borderRadius: BorderRadius.circular(12),
+              showProgressBar: true,
+              icon: const Icon(Icons.error),
+            );
+          }
         }
       },
       child: Scaffold(
@@ -154,14 +174,18 @@ class _RegisterPageState extends State<RegisterPage> {
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(Icons.chevron_left, size: 24),
-                                  const SizedBox(width: 4),
+                                  const Icon(
+                                    Icons.chevron_left,
+                                    size: 24,
+                                    color: AppConfig.primaryColor,
+                                  ),
+                                  const SizedBox(width: 1),
                                   Text(
                                     'Назад к выбору типа',
                                     style: GoogleFonts.firaSans(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w700,
-                                      color: Colors.grey.shade800,
+                                      color: AppConfig.primaryColor,
                                     ),
                                   ),
                                 ],
@@ -180,7 +204,18 @@ class _RegisterPageState extends State<RegisterPage> {
                             color: Colors.grey.shade800,
                           ),
                         ),
-                        const SizedBox(height: 18),
+                        if (_step == 1 && _selectedRole != null) ...[
+                          Text(
+                            _getRoleName(_selectedRole!),
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.firaSans(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w400,
+                              color: Colors.grey.shade900,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 30),
 
                         if (_step == 0) ...[
                           Text(
@@ -191,7 +226,7 @@ class _RegisterPageState extends State<RegisterPage> {
                               color: Colors.grey.shade700,
                             ),
                           ),
-                          const SizedBox(height: 18),
+                          const SizedBox(height: 28),
                           _buildRoleCard(
                             title: 'Пансионат',
                             subtitle: 'Учреждение для ухода за подопечными',
@@ -322,25 +357,30 @@ class _RegisterPageState extends State<RegisterPage> {
                                 ),
                                 const SizedBox(height: 14),
                                 Center(
-                                  child: Column(
-                                    children: [
-                                      Text(
-                                        'Если уже есть аккаунт, нажмите',
-                                        style: GoogleFonts.firaSans(
-                                          fontSize: 17,
-                                          color: Colors.grey.shade700,
-                                        ),
-                                      ),
-                                      TextButton(
-                                        onPressed: () => context.push('/login'),
-                                        child: Text(
-                                          'Войти',
-                                          style: GoogleFonts.firaSans(
-                                            fontWeight: FontWeight.w700,
+                                  child: TextButton(
+                                    onPressed: () => context.push('/login'),
+                                    child: Text.rich(
+                                      TextSpan(
+                                        children: [
+                                          TextSpan(
+                                            text:
+                                                'Если уже есть аккаунт, нажмите ',
+                                            style: GoogleFonts.firaSans(
+                                              color: Colors.grey.shade600,
+                                            ),
                                           ),
-                                        ),
+                                          TextSpan(
+                                            text: 'Войти',
+                                            style: GoogleFonts.firaSans(
+                                              decoration:
+                                                  TextDecoration.underline,
+                                              color: Colors.black,
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ],
+                                      textAlign: TextAlign.center,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -372,14 +412,14 @@ class _RegisterPageState extends State<RegisterPage> {
       }),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           gradient: const LinearGradient(
             colors: [Color(0xFF5FB3BB), Color(0xFF27858A)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.12),
@@ -395,16 +435,16 @@ class _RegisterPageState extends State<RegisterPage> {
             Text(
               title,
               style: GoogleFonts.firaSans(
-                fontSize: 18,
+                fontSize: 20,
                 fontWeight: FontWeight.w800,
                 color: Colors.white,
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Text(
               subtitle,
               style: GoogleFonts.firaSans(
-                fontSize: 12,
+                fontSize: 14,
                 color: Colors.white.withOpacity(0.9),
               ),
             ),

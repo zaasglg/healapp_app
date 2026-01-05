@@ -7,11 +7,27 @@ import 'package:url_launcher/url_launcher.dart';
 import '../config/app_config.dart';
 import '../utils/app_icons.dart';
 import '../bloc/auth/auth_bloc.dart';
+import '../bloc/auth/auth_event.dart';
 import '../bloc/auth/auth_state.dart';
+import '../core/network/api_client.dart';
 
-class ProfilePage extends StatelessWidget {
+class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
   static const String routeName = '/profile';
+
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  @override
+  void initState() {
+    super.initState();
+    // Обновляем данные пользователя при открытии страницы
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<AuthBloc>().add(const AuthRefreshUser());
+    });
+  }
 
   Widget _buildMenuCard({
     required BuildContext context,
@@ -75,20 +91,39 @@ class ProfilePage extends StatelessWidget {
     );
   }
 
-  /// Получить полное имя пользователя
-  String _getFullName(Map<String, dynamic>? userData) {
+  /// Получить имя для отображения (организация или имя сиделки)
+  String _getDisplayName(Map<String, dynamic>? userData) {
     if (userData == null) return '';
 
-    final firstName = (userData['first_name'] as String?)?.trim();
-    final lastName = (userData['last_name'] as String?)?.trim();
-    final middleName = (userData['middle_name'] as String?)?.trim();
+    final accountType = userData['account_type'] as String?;
 
-    final parts = <String>[];
-    if (lastName != null && lastName.isNotEmpty) parts.add(lastName);
-    if (firstName != null && firstName.isNotEmpty) parts.add(firstName);
-    if (middleName != null && middleName.isNotEmpty) parts.add(middleName);
+    // Для частной сиделки или клиента показываем имя и фамилию
+    if (accountType == 'specialist' || accountType == 'client') {
+      final firstName = (userData['first_name'] as String?)?.trim() ?? '';
+      final lastName = (userData['last_name'] as String?)?.trim() ?? '';
 
-    return parts.isNotEmpty ? parts.join(' ') : '';
+      if (firstName.isNotEmpty || lastName.isNotEmpty) {
+        return '$firstName $lastName'.trim();
+      }
+
+      // Пробуем поле name
+      final name = (userData['name'] as String?)?.trim();
+      if (name != null && name.isNotEmpty) {
+        return name;
+      }
+
+      // Если имя не заполнено, показываем телефон
+      return (userData['phone'] as String?)?.trim() ?? '';
+    }
+
+    // Для организаций показываем название организации
+    final organization = userData['organization'] as Map<String, dynamic>?;
+    if (organization != null) {
+      final name = (organization['name'] as String?)?.trim();
+      if (name != null && name.isNotEmpty) return name;
+    }
+
+    return '';
   }
 
   /// Получить отображаемый контакт
@@ -102,6 +137,76 @@ class ProfilePage extends StatelessWidget {
     if (phone != null && phone.isNotEmpty) return phone;
 
     return '';
+  }
+
+  /// Виджет для отображения аватара
+  Widget _buildAvatar(String? avatarUrl) {
+    if (avatarUrl != null && avatarUrl.isNotEmpty) {
+      // Преобразуем относительный путь в полный URL
+      final fullUrl = ApiConfig.getFullUrl(avatarUrl);
+      debugPrint('ProfilePage: fullUrl = $fullUrl');
+
+      return ClipOval(
+        child: Image.network(
+          fullUrl,
+          width: 56,
+          height: 56,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                shape: BoxShape.circle,
+              ),
+              child: Center(
+                child: SvgPicture.asset(
+                  AppIcons.profile,
+                  width: 40,
+                  height: 40,
+                  fit: BoxFit.contain,
+                ),
+              ),
+            );
+          },
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                shape: BoxShape.circle,
+              ),
+              child: Center(
+                child: CircularProgressIndicator(
+                  value: loadingProgress.expectedTotalBytes != null
+                      ? loadingProgress.cumulativeBytesLoaded /
+                            loadingProgress.expectedTotalBytes!
+                      : null,
+                  color: AppConfig.primaryColor,
+                  strokeWidth: 2,
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    return Container(
+      width: 56,
+      height: 56,
+      child: Center(
+        child: SvgPicture.asset(
+          AppIcons.profile,
+          width: 56,
+          height: 56,
+          fit: BoxFit.contain,
+        ),
+      ),
+    );
   }
 
   @override
@@ -136,9 +241,20 @@ class ProfilePage extends StatelessWidget {
             builder: (context, state) {
               // Получаем данные пользователя из состояния
               Map<String, dynamic>? userData;
+              String? avatarUrl;
+              String? accountType;
               if (state is AuthAuthenticated) {
                 userData = state.user.additionalData;
+                avatarUrl = state.user.avatar;
+                accountType = state.user.accountType;
+                // Логируем для отладки
+                debugPrint('ProfilePage: avatarUrl = $avatarUrl');
+                debugPrint(
+                  'ProfilePage: userData avatar = ${userData?['avatar']}',
+                );
               }
+
+              final isSpecialist = accountType == 'specialist';
 
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -161,25 +277,14 @@ class ProfilePage extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            Container(
-                              width: 56,
-                              height: 56,
-                              child: Center(
-                                child: SvgPicture.asset(
-                                  AppIcons.profile,
-                                  width: 56,
-                                  height: 56,
-                                  fit: BoxFit.contain,
-                                ),
-                              ),
-                            ),
+                            _buildAvatar(avatarUrl),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    _getFullName(userData),
+                                    _getDisplayName(userData),
                                     style: GoogleFonts.firaSans(
                                       fontSize: 16,
                                       fontWeight: FontWeight.w800,
@@ -263,18 +368,23 @@ class ProfilePage extends StatelessWidget {
                             subtitle: 'Просмотр и редактирование',
                             onTap: () => context.push('/wards'),
                           ),
-                          _buildMenuCard(
-                            context: context,
-                            title: 'Сотрудники',
-                            subtitle: 'Управление командой',
-                            onTap: () => context.push('/employees'),
-                          ),
-                          _buildMenuCard(
-                            context: context,
-                            title: 'Клиенты',
-                            subtitle: 'Список клиентов организации',
-                            onTap: () => context.push('/clients'),
-                          ),
+                          // Для клиентов показываем только "Мои дневники"
+                          if (accountType != 'client') ...[
+                            // Показываем только для организаций
+                            if (!isSpecialist)
+                              _buildMenuCard(
+                                context: context,
+                                title: 'Сотрудники',
+                                subtitle: 'Управление командой',
+                                onTap: () => context.push('/employees'),
+                              ),
+                            _buildMenuCard(
+                              context: context,
+                              title: 'Клиенты',
+                              subtitle: 'Список клиентов',
+                              onTap: () => context.push('/clients'),
+                            ),
+                          ],
                           const SizedBox(height: 36),
                         ],
                       ),

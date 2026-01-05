@@ -1,61 +1,85 @@
 import 'package:equatable/equatable.dart';
 
-enum TaskStatus {
-  completed, // Выполненная задача
-  planned, // Поставленная задача
-  postponed, // Перенесенная задача
-  uncompleted, // Не выполненная задача
-}
+import '../../repositories/route_sheet_repository.dart';
 
-class RouteSheetTask extends Equatable {
-  final String id;
-  final String name;
-  final String time;
-  final TaskStatus status;
-  final List<int> daysOfWeek; // Дни недели (1-7)
-  final int? order; // Порядок выполнения
+// Re-export models for convenience
+export '../../repositories/route_sheet_repository.dart'
+    show RouteSheetTask, TaskTemplate, TimeRange, TaskStatus, TaskSummary;
 
-  const RouteSheetTask({
-    required this.id,
-    required this.name,
-    required this.time,
-    required this.status,
-    required this.daysOfWeek,
-    this.order,
-  });
-
-  @override
-  List<Object?> get props => [id, name, time, status, daysOfWeek, order];
-}
-
+/// Состояние маршрутного листа
 class RouteSheetState extends Equatable {
   final List<RouteSheetTask> tasks;
+  final List<TaskTemplate> templates;
   final DateTime selectedDate;
+  final TaskSummary? summary;
+  final bool isLoading;
+  final String? errorMessage;
 
-  const RouteSheetState({this.tasks = const [], required this.selectedDate});
+  const RouteSheetState({
+    this.tasks = const [],
+    this.templates = const [],
+    required this.selectedDate,
+    this.summary,
+    this.isLoading = false,
+    this.errorMessage,
+  });
 
   RouteSheetState copyWith({
     List<RouteSheetTask>? tasks,
+    List<TaskTemplate>? templates,
     DateTime? selectedDate,
+    TaskSummary? summary,
+    bool? isLoading,
+    String? errorMessage,
   }) {
     return RouteSheetState(
       tasks: tasks ?? this.tasks,
+      templates: templates ?? this.templates,
       selectedDate: selectedDate ?? this.selectedDate,
+      summary: summary ?? this.summary,
+      isLoading: isLoading ?? this.isLoading,
+      errorMessage: errorMessage,
     );
   }
 
-  // Получить задачи для выбранной даты
+  /// Получить задачи для выбранной даты
   List<RouteSheetTask> getTasksForDate(DateTime date) {
-    final dayOfWeek = date.weekday; // 1 = Monday, 7 = Sunday
     return tasks.where((task) {
-      return task.daysOfWeek.contains(dayOfWeek);
+      return task.startAt.year == date.year &&
+          task.startAt.month == date.month &&
+          task.startAt.day == date.day;
     }).toList();
   }
 
+  /// Получить задачи по временным слотам
+  Map<String, List<RouteSheetTask>> getTasksByTimeSlots(DateTime date) {
+    final tasksForDate = getTasksForDate(date);
+    final Map<String, List<RouteSheetTask>> tasksByTime = {};
+
+    for (var task in tasksForDate) {
+      final time = task.startTimeFormatted;
+      if (!tasksByTime.containsKey(time)) {
+        tasksByTime[time] = [];
+      }
+      tasksByTime[time]!.add(task);
+    }
+
+    return tasksByTime;
+  }
+
+  /// Проверить, есть ли задачи
+  bool get hasTasks => tasks.isNotEmpty;
+
+  /// Проверить, есть ли шаблоны
+  bool get hasTemplates => templates.isNotEmpty;
+
   @override
-  List<Object?> get props => [tasks, selectedDate];
+  List<Object?> get props => [
+    tasks,
+    templates,
+    selectedDate,
+    summary,
+    isLoading,
+    errorMessage,
+  ];
 }
-
-
-
-

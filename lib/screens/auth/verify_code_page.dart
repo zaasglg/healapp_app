@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../config/app_config.dart';
+import '../../utils/app_logger.dart';
 import '../../bloc/auth/auth_bloc.dart';
 import '../../bloc/auth/auth_event.dart';
 import '../../bloc/auth/auth_state.dart';
@@ -50,11 +51,17 @@ class _VerifyCodePageState extends State<VerifyCodePage> {
       listener: (context, state) {
         // Навигация при успешной верификации
         if (state is AuthAuthenticated) {
-          // Если пользователь имеет роль manager (пансионат), перенаправляем на заполнение профиля
-          if (state.user.hasRole('manager')) {
-            context.go('/fill-organization-profile');
+          log.i('Пользователь авторизован: ${state.user}');
+          log.d('Роли: ${state.user.roles}, Тип: ${state.user.accountType}');
+          log.d('Организация: ${state.user.organization}');
+
+          // Выбираем страницу профиля в зависимости от типа аккаунта
+          if (state.user.accountType == 'specialist') {
+            // Частная сиделка - страница профиля сиделки
+            context.go('/fill-caregiver-profile');
           } else {
-            context.go('/profile');
+            // Организация (pansionat, agency) - страница организации
+            context.go('/fill-organization-profile');
           }
         }
 

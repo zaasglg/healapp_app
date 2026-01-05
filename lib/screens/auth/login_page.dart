@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
+import 'package:toastification/toastification.dart';
 import '../../config/app_config.dart';
 import '../../bloc/auth/auth_bloc.dart';
 import '../../bloc/auth/auth_event.dart';
@@ -59,20 +60,27 @@ class _LoginPageState extends State<LoginPage> {
 
     return BlocListener<AuthBloc, AuthState>(
       listener: (context, state) {
-        // Навигация при успешной авторизации
-        if (state is AuthAuthenticated) {
-          context.go('/home');
-        }
+        if (ModalRoute.of(context)?.isCurrent ?? false) {
+          // Навигация при успешной авторизации
+          if (state is AuthAuthenticated) {
+            context.go('/diaries');
+          }
 
-        // Показ ошибки при неудаче
-        if (state is AuthFailure) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
+          // Показ ошибки при неудаче
+          if (state is AuthFailure) {
+            toastification.show(
+              context: context,
+              type: ToastificationType.error,
+              style: ToastificationStyle.fillColored,
+              title: const Text('Ошибка'),
+              description: Text(state.message),
+              alignment: Alignment.topCenter,
+              autoCloseDuration: const Duration(seconds: 4),
+              borderRadius: BorderRadius.circular(12),
+              showProgressBar: true,
+              icon: const Icon(Icons.error),
+            );
+          }
         }
       },
       child: Scaffold(
@@ -122,9 +130,7 @@ class _LoginPageState extends State<LoginPage> {
                             children: [
                               Text(
                                 'Введите номер телефона',
-                                style: GoogleFonts.firaSans(
-                                  fontWeight: FontWeight.w600,
-                                ),
+                                style: GoogleFonts.firaSans(),
                               ),
                               const SizedBox(height: 8),
                               TextFormField(
@@ -137,12 +143,7 @@ class _LoginPageState extends State<LoginPage> {
                                     : null,
                               ),
                               const SizedBox(height: 12),
-                              Text(
-                                'Пароль',
-                                style: GoogleFonts.firaSans(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
+                              Text('Пароль', style: GoogleFonts.firaSans()),
                               const SizedBox(height: 8),
                               TextFormField(
                                 obscureText: true,
@@ -172,16 +173,31 @@ class _LoginPageState extends State<LoginPage> {
                                     ),
                                     onPressed: isLoading ? null : _submit,
                                     child: isLoading
-                                        ? const SizedBox(
-                                            width: 20,
-                                            height: 20,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              valueColor:
-                                                  AlwaysStoppedAnimation<Color>(
-                                                    Colors.white,
-                                                  ),
-                                            ),
+                                        ? Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              const SizedBox(
+                                                width: 20,
+                                                height: 20,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  valueColor:
+                                                      AlwaysStoppedAnimation<
+                                                        Color
+                                                      >(Colors.white),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 12),
+                                              Text(
+                                                'Загрузка...',
+                                                style: GoogleFonts.firaSans(
+                                                  fontSize: 16,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                            ],
                                           )
                                         : Text(
                                             'Войти',
@@ -201,19 +217,22 @@ class _LoginPageState extends State<LoginPage> {
                                   child: Text.rich(
                                     TextSpan(
                                       children: [
-                                        TextSpan(text: 'Если нет аккаунта \n'),
                                         TextSpan(
-                                          text: 'Зарегистрироваться',
+                                          text:
+                                              'Если еще нет аккаунта, нажмите ',
                                           style: GoogleFonts.firaSans(
-                                            fontWeight: FontWeight.bold,
+                                            color: Colors.grey.shade600,
+                                          ),
+                                        ),
+                                        TextSpan(
+                                          text: 'Регистрация',
+                                          style: GoogleFonts.firaSans(
                                             decoration:
                                                 TextDecoration.underline,
                                             color: Colors.black,
                                           ),
                                         ),
                                       ],
-                                      style:
-                                          GoogleFonts.firaSans(), // общий стиль
                                     ),
                                     textAlign: TextAlign.center,
                                   ),
