@@ -605,25 +605,4 @@ class _DiaryCard extends StatelessWidget {
       ),
     );
   }
-
-  String _getInitials(String? name) {
-    if (name == null || name.trim().isEmpty) return '?';
-    final parts = name.trim().split(' ').where((p) => p.isNotEmpty).toList();
-    if (parts.isEmpty) return '?';
-    if (parts.length >= 2) {
-      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-    }
-    return parts[0][0].toUpperCase();
-  }
-
-  String _formatEntriesCount(int count) {
-    if (count == 0) return 'Нет записей';
-    if (count == 1) return '1 запись';
-    if (count >= 2 && count <= 4) return '$count записи';
-    return '$count записей';
-  }
-
-  String _formatDate(DateTime date) {
-    return DateFormatterCache.formatRelativeDate(date);
-  }
 }

@@ -1,11 +1,11 @@
 {
-    "name": "Здраво специалисты",
+    "name": "Здраво Специалисты",
     "short_name": "Здраво",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#ffffff",
     "theme_color": "#61B4C6",
-    "description": "Мобильная экосистема для ухода за пожилыми людьми: поиск сиделок, заказ продуктов отслеживание здоровья",
+    "description": "Здраво Специалисты — единая платформа для эффективной работы медицинского персонала и сиделок.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "categories": ["health", "medical", "lifestyle"],
