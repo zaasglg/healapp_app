@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:ui';
 // Conditional import for web
-import 'dart:html' as html if (dart.library.io) 'dart:io';
+import 'package:healapp_mobile/utils/downloader/downloader.dart';
 
 /// Красивое модальное окно для предложения скачать приложение (только для веб-версии)
 class DownloadAppModal extends StatelessWidget {
@@ -51,14 +51,7 @@ class DownloadAppModal extends StatelessWidget {
   /// Скачивает APK файл
   static void _downloadApk() {
     if (kIsWeb) {
-      // Для веб-версии используем dart:html для создания ссылки на скачивание
-      final anchor = html.AnchorElement(href: 'assets/app/app-release.apk')
-        ..setAttribute('download', 'HealApp.apk')
-        ..style.display = 'none';
-      
-      html.document.body?.append(anchor);
-      anchor.click();
-      anchor.remove();
+      downloadFile('assets/assets/app/app-release.apk', 'HealApp.apk');
     }
   }
 
