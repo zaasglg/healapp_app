@@ -476,6 +476,13 @@ class DiaryRepository {
     Map<String, dynamic>? settings,
   }) async {
     try {
+      log.d('📤 Отправка запроса на создание дневника');
+      log.d('   patientId: $patientId');
+      log.d(
+        '   pinnedParameters: ${pinnedParameters?.map((e) => e.toJson()).toList()}',
+      );
+      log.d('   settings: $settings');
+
       final response = await _apiClient.post(
         '/diary/create',
         data: {
@@ -486,10 +493,14 @@ class DiaryRepository {
         },
       );
 
+      log.d('📥 Ответ получен: ${response.statusCode}');
       final data = response.data as Map<String, dynamic>;
+      log.d('   Данные: $data');
+
       return DiaryCreated(Diary.fromJson(data));
     } on ConflictException catch (e) {
       // Обработка 409 Conflict — дневник уже существует
+      log.w('⚠️ Конфликт: дневник уже существует');
       final diaryId = e.getData<int>('diary_id') ?? 0;
       return DiaryAlreadyExists(
         e.message.isNotEmpty
@@ -497,9 +508,14 @@ class DiaryRepository {
             : 'Дневник для этого пациента уже существует',
         diaryId,
       );
-    } on ApiException {
+    } on ApiException catch (e) {
+      log.e(
+        '❌ API ошибка при создании дневника: ${e.message}, statusCode: ${e.statusCode}',
+      );
       rethrow;
-    } catch (e) {
+    } catch (e, stackTrace) {
+      log.e('❌ Неизвестная ошибка при создании дневника: $e');
+      log.e('StackTrace: $stackTrace');
       throw ServerException('Ошибка при создании дневника: ${e.toString()}');
     }
   }
@@ -604,7 +620,9 @@ class DiaryRepository {
           'parameter_key': parameterKey,
           'value': value,
           'notes': notes,
-          'recorded_at': (recordedAt ?? DateTime.now()).toIso8601String(),
+          'recorded_at': (recordedAt ?? DateTime.now())
+              .toUtc()
+              .toIso8601String(),
         },
       );
       final data = response.data as Map<String, dynamic>;
@@ -664,7 +682,7 @@ class DiaryRepository {
         data['notes'] = notes;
       }
       if (recordedAt != null) {
-        data['recorded_at'] = recordedAt.toIso8601String();
+        data['recorded_at'] = recordedAt.toUtc().toIso8601String();
       }
 
       final response = await _apiClient.put(
@@ -714,10 +732,7 @@ class DiaryRepository {
     try {
       final response = await _apiClient.put(
         '/diary/$diaryId/entries/sync',
-        data: {
-          'entries': entries,
-          'delete_missing': deleteMissing,
-        },
+        data: {'entries': entries, 'delete_missing': deleteMissing},
       );
 
       final data = response.data as Map<String, dynamic>;
@@ -725,38 +740,70 @@ class DiaryRepository {
     } on ApiException {
       rethrow;
     } catch (e) {
-      throw ServerException('Ошибка при синхронизации записей: ${e.toString()}');
+      throw ServerException(
+        'Ошибка при синхронизации записей: ${e.toString()}',
+      );
     }
   }
 
   /// Сохранить настройки закрепленных показателей (API v2)
+  /// Опционально можно передать settings.all_indicators для "всех показателей"
   Future<void> savePinnedParameters({
     required int patientId,
     required List<PinnedParameter> pinnedParameters,
+    List<String>? allIndicators,
+  }) async {
+    try {
+      final requestData = <String, dynamic>{
+        'patient_id': patientId,
+        'pinned_parameters': pinnedParameters.map((p) {
+          // Отправляем полный объект с times и label
+          return {
+            'key': p.key,
+            'interval_minutes': p.intervalMinutes < 1 ? 60 : p.intervalMinutes,
+            'times': p.times,
+            'label': p.label,
+          };
+        }).toList(),
+      };
+
+      // Добавляем settings.all_indicators если передан
+      if (allIndicators != null) {
+        requestData['settings'] = {'all_indicators': allIndicators};
+      }
+
+      await _apiClient.patch('/diary/pinned', data: requestData);
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      throw ServerException(
+        'Ошибка при сохранении параметров: ${e.toString()}',
+      );
+    }
+  }
+
+  /// Сохранить только settings.all_indicators (для диалога "Все показатели")
+  Future<void> saveAllIndicators({
+    required int patientId,
+    required List<String> allIndicators,
+    List<PinnedParameter> currentPinnedParameters = const [],
   }) async {
     try {
       await _apiClient.patch(
         '/diary/pinned',
         data: {
           'patient_id': patientId,
-          'pinned_parameters': pinnedParameters.map((p) {
-            // Отправляем полный объект с times и label
-            return {
-              'key': p.key,
-              'interval_minutes': p.intervalMinutes < 1
-                  ? 60
-                  : p.intervalMinutes,
-              'times': p.times,
-              'label': p.label,
-            };
-          }).toList(),
+          'pinned_parameters': currentPinnedParameters
+              .map((p) => {'key': p.key, 'label': p.label})
+              .toList(),
+          'settings': {'all_indicators': allIndicators},
         },
       );
     } on ApiException {
       rethrow;
     } catch (e) {
       throw ServerException(
-        'Ошибка при сохранении параметров: ${e.toString()}',
+        'Ошибка при сохранении показателей: ${e.toString()}',
       );
     }
   }
@@ -767,7 +814,7 @@ class DiaryRepository {
     required int patientId,
     required String type,
     required String key,
-    required dynamic value,
+    required Map<String, dynamic> value,
     String? notes,
     required DateTime recordedAt,
   }) async {
@@ -780,7 +827,7 @@ class DiaryRepository {
           'key': key,
           'value': value,
           'notes': notes,
-          'recorded_at': recordedAt.toIso8601String(),
+          'recorded_at': recordedAt.toUtc().toIso8601String(),
         },
       );
 

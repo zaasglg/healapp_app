@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import '../core/network/api_client.dart';
 import '../core/network/api_exceptions.dart';
@@ -45,6 +46,59 @@ class User {
 
   /// Для обратной совместимости
   String? get name => fullName;
+
+  /// Получить имя для отображения (организация или имя сиделки)
+  String get displayName {
+    // Для частной сиделки, клиента, врача или сотрудника организации показываем имя и фамилию
+    if (accountType == 'specialist' ||
+        accountType == 'client' ||
+        accountType == 'doctor' ||
+        accountType == 'caregiver') {
+      final fName = firstName?.trim() ?? '';
+      final lName = lastName?.trim() ?? '';
+
+      if (fName.isNotEmpty || lName.isNotEmpty) {
+        return '$fName $lName'.trim();
+      }
+
+      // Пробуем поле name из additionalData
+      if (additionalData != null) {
+        final name = (additionalData!['name'] as String?)?.trim();
+        if (name != null && name.isNotEmpty) {
+          return name;
+        }
+      }
+
+      // Если имя не заполнено, показываем телефон
+      return phone;
+    }
+
+    // Для пансионата с именем и фамилией показываем персональные данные
+    if (accountType == 'pansionat') {
+      final fName = firstName?.trim() ?? '';
+      final lName = lastName?.trim() ?? '';
+
+      if (fName.isNotEmpty || lName.isNotEmpty) {
+        return '$fName $lName'.trim();
+      }
+    }
+
+    // Для организаций показываем название организации
+    if (organization != null) {
+      final name = (organization!['name'] as String?)?.trim();
+      if (name != null && name.isNotEmpty) return name;
+    }
+
+    // Fallback
+    return fullName ?? phone;
+  }
+
+  /// Получить отображаемый контакт
+  String get displayContact {
+    if (email != null && email!.trim().isNotEmpty) return email!.trim();
+    if (phone.isNotEmpty) return phone;
+    return '';
+  }
 
   factory User.fromJson(Map<String, dynamic> json) {
     // Извлекаем роли из разных возможных мест в ответе
@@ -162,6 +216,26 @@ class AuthRepository {
       rethrow;
     } catch (e) {
       throw ServerException('Ошибка при входе: ${e.toString()}');
+    }
+  }
+
+  /// Авторизация по токену (для Web redirect)
+  ///
+  /// [token] - токен доступа
+  ///
+  /// Возвращает [User] при успешной авторизации
+  /// Выбрасывает [ApiException] при ошибке
+  Future<User> loginWithToken(String token) async {
+    try {
+      // Сохраняем токен
+      await _apiClient.saveToken(token);
+
+      // Получаем данные пользователя
+      return await getCurrentUser();
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      throw ServerException('Ошибка при входе по токену: ${e.toString()}');
     }
   }
 
@@ -292,9 +366,13 @@ class AuthRepository {
         throw const ServerException('Данные пользователя не получены');
       }
 
-      // Логируем данные организации для отладки
-      final org = userData['organization'];
-      log.d('Данные организации из /auth/me: $org');
+      // Красивое логирование ответа /auth/me
+      try {
+        final prettyJson = const JsonEncoder.withIndent('  ').convert(data);
+        log.d('⬇️ Ответ /auth/me:\n$prettyJson');
+      } catch (e) {
+        log.e('Ошибка при логировании ответа /auth/me: $e');
+      }
 
       return User.fromJson(userData);
     } on ApiException {

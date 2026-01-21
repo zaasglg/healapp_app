@@ -51,7 +51,8 @@ class ApiClient {
         baseUrl: ApiConfig.baseUrl,
         connectTimeout: ApiConfig.connectTimeout,
         receiveTimeout: ApiConfig.receiveTimeout,
-        sendTimeout: ApiConfig.sendTimeout,
+        // На Web sendTimeout вызывает ошибку для запросов без тела (например, GET)
+        sendTimeout: kIsWeb ? null : ApiConfig.sendTimeout,
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -114,7 +115,15 @@ class ApiClient {
     ProgressCallback? onReceiveProgress,
   }) async {
     try {
-      return await _dio.post<T>(
+      final fullUrl = '${_dio.options.baseUrl}$path';
+      log.d('ApiClient: 📤 POST запрос к $fullUrl');
+      log.d('ApiClient: 📦 Данные: $data');
+      if (queryParameters != null) {
+        log.d('ApiClient: 🔍 Query параметры: $queryParameters');
+      }
+
+      final startTime = DateTime.now();
+      final response = await _dio.post<T>(
         path,
         data: data,
         queryParameters: queryParameters,
@@ -123,8 +132,29 @@ class ApiClient {
         onSendProgress: onSendProgress,
         onReceiveProgress: onReceiveProgress,
       );
+
+      final duration = DateTime.now().difference(startTime);
+      log.d(
+        'ApiClient: ✅ POST успешен за ${duration.inMilliseconds}ms, статус: ${response.statusCode}',
+      );
+      log.d('ApiClient: 📥 Ответ: ${response.data}');
+
+      return response;
     } on DioException catch (e) {
+      log.e(
+        'ApiClient: ❌ DioException при POST $path: ${e.type}, message: ${e.message}',
+      );
+      if (e.response != null) {
+        log.e('ApiClient: 📛 Response status: ${e.response?.statusCode}');
+        log.e('ApiClient: 📛 Response data: ${e.response?.data}');
+      }
+      if (e.error != null) {
+        log.e('ApiClient: 📛 Underlying error: ${e.error}');
+      }
       throw ApiExceptionHandler.handleDioException(e);
+    } catch (e) {
+      log.e('ApiClient: ❌ Неизвестная ошибка при POST $path: $e');
+      rethrow;
     }
   }
 
@@ -265,15 +295,23 @@ class _AuthInterceptor extends Interceptor {
     RequestOptions options,
     RequestInterceptorHandler handler,
   ) async {
+    log.d(
+      '🔐 AuthInterceptor: onRequest для ${options.method} ${options.path}',
+    );
+
     // Читаем токен из безопасного хранилища
     final token = await _storage.read(key: ApiConfig.tokenKey);
 
     // Если токен существует, добавляем его в заголовок Authorization
     if (token != null && token.isNotEmpty) {
       options.headers['Authorization'] = 'Bearer $token';
+      log.d('🔑 AuthInterceptor: Токен добавлен в заголовок');
+    } else {
+      log.w('⚠️ AuthInterceptor: Токен не найден');
     }
 
     super.onRequest(options, handler);
+    log.d('✅ AuthInterceptor: Запрос отправлен');
   }
 
   @override

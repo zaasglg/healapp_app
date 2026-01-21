@@ -80,9 +80,7 @@ class AppCache {
   );
 
   static final DataCache<Map<String, dynamic>> diaryDetails =
-      DataCache<Map<String, dynamic>>(
-    defaultTtl: const Duration(minutes: 3),
-  );
+      DataCache<Map<String, dynamic>>(defaultTtl: const Duration(minutes: 3));
 
   /// Очистить все кэши
   static void clearAll() {
@@ -100,4 +98,3 @@ class AppCache {
     diaryDetails.clearExpired();
   }
 }
-

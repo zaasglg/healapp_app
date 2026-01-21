@@ -19,6 +19,16 @@ class AuthLoginRequested extends AuthEvent {
   List<Object?> get props => [phone, password];
 }
 
+/// Событие входа по токену (для Web redirect)
+class AuthLoginWithToken extends AuthEvent {
+  final String token;
+
+  const AuthLoginWithToken(this.token);
+
+  @override
+  List<Object?> get props => [token];
+}
+
 /// Событие запроса выхода из системы
 class AuthLogoutRequested extends AuthEvent {
   const AuthLogoutRequested();

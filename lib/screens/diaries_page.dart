@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:shimmer/shimmer.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../bloc/diary/diary_bloc.dart';
 import '../bloc/diary/diary_event.dart';
 import '../bloc/diary/diary_state.dart';
@@ -14,6 +15,7 @@ import '../repositories/diary_repository.dart';
 import '../utils/app_icons.dart';
 import '../utils/performance_utils.dart';
 import '../core/network/api_client.dart';
+import '../widgets/download_app_modal.dart';
 
 class DiariesPage extends StatelessWidget {
   const DiariesPage({super.key});
@@ -39,6 +41,15 @@ class _DiariesPageContentState extends State<_DiariesPageContent> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   bool _isFirstBuild = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // Показываем модальное окно для веб-пользователей
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      DownloadAppModal.showIfWeb(context);
+    });
+  }
 
   @override
   void didChangeDependencies() {
@@ -191,7 +202,11 @@ class _DiariesPageContentState extends State<_DiariesPageContent> {
               builder: (context, authState) {
                 bool canCreateDiary = true;
                 if (authState is AuthAuthenticated) {
-                  if (authState.user.accountType == 'specialist') {
+                  final type = authState.user.accountType;
+                  // Скрываем для частной сиделки, врача и сиделки (от организации)
+                  if (type == 'specialist' ||
+                      type == 'doctor' ||
+                      type == 'caregiver') {
                     canCreateDiary = false;
                   }
                 }
@@ -252,7 +267,7 @@ class _DiariesPageContentState extends State<_DiariesPageContent> {
             borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.05),
+                color: Colors.black.withValues(alpha: 0.05),
                 blurRadius: 10,
                 offset: const Offset(0, 2),
               ),
@@ -321,7 +336,7 @@ class _DiariesPageContentState extends State<_DiariesPageContent> {
                 shape: BoxShape.circle,
                 gradient: LinearGradient(
                   colors: [
-                    AppConfig.primaryColor.withOpacity(0.7),
+                    AppConfig.primaryColor.withValues(alpha: 0.7),
                     AppConfig.primaryColor,
                   ],
                   begin: Alignment.topLeft,
@@ -458,44 +473,41 @@ class _DiariesPageContentState extends State<_DiariesPageContent> {
       final fullUrl = ApiConfig.getFullUrl(avatarUrl);
 
       return ClipOval(
-        child: Image.network(
-          fullUrl,
+        child: CachedNetworkImage(
+          imageUrl: fullUrl,
           width: 44,
           height: 44,
           fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) {
-            return Container(
-              child: Center(
-                child: SvgPicture.asset(
-                  AppIcons.profile,
-                  width: 44,
-                  height: 44,
-                  fit: BoxFit.contain,
-                ),
+          placeholder: (context, url) => Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade200,
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: CircularProgressIndicator(
+                color: AppConfig.primaryColor,
+                strokeWidth: 2,
               ),
-            );
-          },
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade200,
-                shape: BoxShape.circle,
+            ),
+          ),
+          errorWidget: (context, url, error) => Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade200,
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: SvgPicture.asset(
+                AppIcons.profile,
+                width: 44,
+                height: 44,
+                fit: BoxFit.contain,
               ),
-              child: Center(
-                child: CircularProgressIndicator(
-                  value: loadingProgress.expectedTotalBytes != null
-                      ? loadingProgress.cumulativeBytesLoaded /
-                            loadingProgress.expectedTotalBytes!
-                      : null,
-                  color: AppConfig.primaryColor,
-                  strokeWidth: 2,
-                ),
-              ),
-            );
-          },
+            ),
+          ),
         ),
       );
     }
@@ -529,7 +541,7 @@ class _DiaryCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),

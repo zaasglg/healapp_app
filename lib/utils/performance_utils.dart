@@ -77,7 +77,8 @@ class OptimizedListView extends StatelessWidget {
     this.itemExtent,
     this.cacheExtent = 250.0, // Кэшируем 250px вне видимой области
     this.shrinkWrap = false,
-    this.addAutomaticKeepAlives = false, // Отключаем для списков без сохранения состояния
+    this.addAutomaticKeepAlives =
+        false, // Отключаем для списков без сохранения состояния
     this.addRepaintBoundaries = true, // Включаем границы перерисовки
   });
 
@@ -181,4 +182,3 @@ class PhoneFormatter {
     _cache.clear();
   }
 }
-

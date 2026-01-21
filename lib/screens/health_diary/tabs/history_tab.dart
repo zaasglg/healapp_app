@@ -1,314 +1,344 @@
+/// Вкладка истории
+///
+/// Отображает историю заполнения показателей
+/// за выбранный период.
+
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart';
-
+import '../../../bloc/diary/diary_bloc.dart';
+import '../../../bloc/diary/diary_state.dart';
 import '../../../config/app_config.dart';
+import '../../../utils/health_diary/health_diary_utils.dart';
 
-/// Таб "История" для страницы дневника здоровья
+/// Вкладка истории дневника
 class HistoryTab extends StatefulWidget {
-  final DateTime initialDate;
-  final Function(DateTime) onDateChanged;
+  /// ID дневника
+  final int diaryId;
 
-  const HistoryTab({
-    super.key,
-    required this.initialDate,
-    required this.onDateChanged,
-  });
+  const HistoryTab({super.key, required this.diaryId});
 
   @override
   State<HistoryTab> createState() => _HistoryTabState();
 }
 
 class _HistoryTabState extends State<HistoryTab> {
-  late DateTime _selectedDate;
-  bool _isDatePickerExpanded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _selectedDate = widget.initialDate;
-  }
+  DateTime _selectedDate = DateTime.now();
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'НАЖМИТЕ, ЧТОБЫ ВЫБРАТЬ ДАТУ ИСТОРИИ ЗАПОЛНЕНИЯ',
-              style: GoogleFonts.firaSans(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey.shade600,
-              ),
-            ),
-            const SizedBox(height: 8),
-            _buildDatePicker(),
-            const SizedBox(height: 24),
-            _buildMedicationsSection(),
-            const SizedBox(height: 24),
-            _buildReportSection(),
-          ],
-        ),
-      ),
-    );
-  }
+    return BlocBuilder<DiaryBloc, DiaryState>(
+      builder: (context, state) {
+        if (state is DiaryLoading) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-  Widget _buildDatePicker() {
-    // Форматируем дату с заглавной первой буквой
-    final formattedDate = DateFormat(
-      "EEEE, d MMMM y'г'",
-      'ru',
-    ).format(_selectedDate);
-    final capitalizedDate =
-        formattedDate[0].toUpperCase() + formattedDate.substring(1);
+        if (state is DiaryLoaded) {
+          return _buildContent(state);
+        }
 
-    return InkWell(
-      onTap: () {
-        setState(() {
-          _isDatePickerExpanded = !_isDatePickerExpanded;
-        });
+        return const SizedBox.shrink();
       },
-      borderRadius: BorderRadius.circular(28),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFFE5F4F7), Color(0xFFD0EDF2)],
-          ),
-          borderRadius: BorderRadius.circular(28),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF2B8A9E).withOpacity(0.12),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              capitalizedDate,
-              textAlign: TextAlign.center,
-              style: GoogleFonts.firaSans(
-                fontSize: 21,
-                fontWeight: FontWeight.w700,
-                color: const Color(0xFF1A6B7C),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Отчёт будет построен за этот день',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.firaSans(
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-                color: const Color(0xFF6BC4D4),
-              ),
-            ),
-            if (_isDatePickerExpanded) ...[
-              const SizedBox(height: 16),
-              _buildDaySelector(),
-            ],
-          ],
-        ),
-      ),
     );
   }
 
-  Widget _buildDaySelector() {
-    final daysInMonth = DateTime(
-      _selectedDate.year,
-      _selectedDate.month + 1,
-      0,
-    ).day;
-    final selectedDayIndex = _selectedDate.day - 1;
-    final initialOffset = (selectedDayIndex * 56.0) - 140;
+  Widget _buildContent(DiaryLoaded state) {
+    return Column(
+      children: [
+        // Навигация по датам
+        _buildDateNavigation(),
 
-    return SizedBox(
-      height: 70,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        controller: ScrollController(
-          initialScrollOffset: initialOffset > 0 ? initialOffset : 0,
-        ),
-        itemCount: daysInMonth,
-        itemBuilder: (context, index) {
-          final date = DateTime(
-            _selectedDate.year,
-            _selectedDate.month,
-            index + 1,
-          );
-          final isSelected = date.day == _selectedDate.day;
-          final monthName = DateFormat('MMM', 'ru').format(date);
+        // Список записей
+        Expanded(child: _buildEntriesList(state)),
+      ],
+    );
+  }
 
-          return GestureDetector(
-            onTap: () {
+  Widget _buildDateNavigation() {
+    final now = DateTime.now();
+    final isToday =
+        _selectedDate.year == now.year &&
+        _selectedDate.month == now.month &&
+        _selectedDate.day == now.day;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Назад
+          IconButton(
+            onPressed: () {
               setState(() {
-                _selectedDate = date;
-                _isDatePickerExpanded = false;
+                _selectedDate = _selectedDate.subtract(const Duration(days: 1));
               });
-              widget.onDateChanged(date);
             },
-            child: Container(
-              width: 48,
-              margin: EdgeInsets.only(
-                left: index == 0 ? 0 : 4,
-                right: index == daysInMonth - 1 ? 0 : 4,
-              ),
+            icon: Container(
+              padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: isSelected
-                    ? const Color(0xFF5A5A5A)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFF7A7A7A), width: 1.5),
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(10),
               ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+              child: Icon(Icons.chevron_left, color: Colors.grey.shade700),
+            ),
+          ),
+
+          // Дата
+          GestureDetector(
+            onTap: () => _selectDate(context),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppConfig.primaryColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    monthName,
-                    style: GoogleFonts.firaSans(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: isSelected
-                          ? Colors.white
-                          : const Color(0xFF5A5A5A),
-                    ),
+                  Icon(
+                    Icons.calendar_today,
+                    size: 18,
+                    color: AppConfig.primaryColor,
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(width: 8),
                   Text(
-                    '${date.day}',
+                    isToday ? 'Сегодня' : _formatDate(_selectedDate),
                     style: GoogleFonts.firaSans(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: isSelected
-                          ? Colors.white
-                          : const Color(0xFF5A5A5A),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: AppConfig.primaryColor,
                     ),
                   ),
                 ],
               ),
             ),
-          );
-        },
+          ),
+
+          // Вперёд
+          IconButton(
+            onPressed: isToday
+                ? null
+                : () {
+                    setState(() {
+                      _selectedDate = _selectedDate.add(
+                        const Duration(days: 1),
+                      );
+                    });
+                  },
+            icon: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: isToday ? Colors.grey.shade50 : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                Icons.chevron_right,
+                color: isToday ? Colors.grey.shade400 : Colors.grey.shade700,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildMedicationsSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Принятые лекарства и витамины',
-          style: GoogleFonts.firaSans(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: Colors.grey.shade900,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppConfig.primaryColor.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Center(
-            child: Text(
-              'Нет записей за эту дату',
-              style: GoogleFonts.firaSans(
-                fontSize: 14,
-                color: AppConfig.primaryColor,
-              ),
-            ),
-          ),
-        ),
-      ],
+  Widget _buildEntriesList(DiaryLoaded state) {
+    final entries = state.diary.entries.where((e) {
+      // Конвертируем UTC в локальное время для корректного сравнения дат
+      final localRecordedAt = e.recordedAt.toLocal();
+      return localRecordedAt.year == _selectedDate.year &&
+          localRecordedAt.month == _selectedDate.month &&
+          localRecordedAt.day == _selectedDate.day;
+    }).toList();
+
+    if (entries.isEmpty) {
+      return _buildEmptyState();
+    }
+
+    // Группировка по времени (используем локальное время)
+    final groupedEntries = <String, List<dynamic>>{};
+    for (final entry in entries) {
+      final localTime = entry.recordedAt.toLocal();
+      final time = '${localTime.hour.toString().padLeft(2, '0')}:00';
+      groupedEntries.putIfAbsent(time, () => []).add(entry);
+    }
+
+    final sortedTimes = groupedEntries.keys.toList()..sort();
+
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      itemCount: sortedTimes.length,
+      itemBuilder: (context, index) {
+        final time = sortedTimes[index];
+        final timeEntries = groupedEntries[time]!;
+        return _buildTimeGroup(time, timeEntries);
+      },
     );
   }
 
-  Widget _buildReportSection() {
+  Widget _buildTimeGroup(String time, List<dynamic> entries) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Отчёт за сегодня',
-          style: GoogleFonts.firaSans(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: Colors.grey.shade900,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppConfig.primaryColor.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _buildReportItem('СМЕНА ПОДГУЗНИКОВ', '122', '04:07'),
-              const SizedBox(height: 16),
-              _buildReportItem('ТЕМПЕРАТУРА', '2°C', '10:25'),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildReportItem(String title, String value, String time) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: GoogleFonts.firaSans(
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            color: Colors.grey.shade900,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-          ),
+        // Заголовок времени
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                value,
-                style: GoogleFonts.firaSans(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey.shade900,
+              Container(
+                width: 4,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: AppConfig.primaryColor,
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
+              const SizedBox(width: 10),
               Text(
                 time,
                 style: GoogleFonts.firaSans(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey.shade900,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey.shade800,
                 ),
               ),
             ],
           ),
         ),
+
+        // Записи
+        ...entries.map((entry) => _buildEntryCard(entry)),
+
+        const SizedBox(height: 12),
       ],
     );
+  }
+
+  Widget _buildEntryCard(dynamic entry) {
+    final label = getIndicatorLabel(entry.parameterKey);
+    final value = formatEntryValue(entry);
+    final unit = getUnitForParameter(entry.parameterKey);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        children: [
+          // Иконка
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppConfig.primaryColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(Icons.check, color: AppConfig.primaryColor, size: 20),
+          ),
+          const SizedBox(width: 12),
+
+          // Информация
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: GoogleFonts.firaSans(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$value $unit',
+                  style: GoogleFonts.firaSans(
+                    fontSize: 13,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Время
+          Text(
+            () {
+              final localTime = entry.recordedAt.toLocal();
+              return '${localTime.hour.toString().padLeft(2, '0')}:${localTime.minute.toString().padLeft(2, '0')}';
+            }(),
+            style: GoogleFonts.firaSans(
+              fontSize: 12,
+              color: Colors.grey.shade500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.history_outlined, size: 64, color: Colors.grey.shade400),
+          const SizedBox(height: 16),
+          Text(
+            'Нет записей',
+            style: GoogleFonts.firaSans(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'За этот день нет данных',
+            style: GoogleFonts.firaSans(
+              fontSize: 14,
+              color: Colors.grey.shade500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _selectDate(BuildContext context) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedDate = picked;
+      });
+    }
+  }
+
+  String _formatDate(DateTime date) {
+    final months = [
+      'января',
+      'февраля',
+      'марта',
+      'апреля',
+      'мая',
+      'июня',
+      'июля',
+      'августа',
+      'сентября',
+      'октября',
+      'ноября',
+      'декабря',
+    ];
+    return '${date.day} ${months[date.month - 1]}';
   }
 }

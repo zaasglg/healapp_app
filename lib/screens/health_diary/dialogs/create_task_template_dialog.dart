@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../bloc/route_sheet/route_sheet_cubit.dart';
 import '../../../bloc/route_sheet/route_sheet_state.dart';
 import '../../../config/app_config.dart';
 import '../../../repositories/employee_repository.dart';
+import '../widgets/modals/time_picker_modal.dart';
 
 /// Диалог создания шаблона задачи для маршрутного листа
 class CreateTaskTemplateDialog extends StatefulWidget {
@@ -581,15 +581,13 @@ class _CreateTaskTemplateDialogState extends State<CreateTaskTemplateDialog> {
   }
 
   Future<void> _selectTime(TextEditingController controller) async {
-    final time = await showTimePicker(
+    final time = await showTimePickerModal(
       context: context,
+      title: 'Выберите время',
+      description: controller == _startTimeController
+          ? 'Время начала выполнения задачи'
+          : 'Время окончания выполнения задачи',
       initialTime: TimeOfDay.now(),
-      builder: (context, child) {
-        return MediaQuery(
-          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
-          child: child!,
-        );
-      },
     );
     if (time != null) {
       controller.text =

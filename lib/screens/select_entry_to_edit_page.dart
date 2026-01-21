@@ -4,7 +4,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../config/app_config.dart';
 import '../utils/app_icons.dart';
-import 'dart:convert';
 import '../utils/app_logger.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../bloc/diary/diary_event.dart';
@@ -59,6 +58,7 @@ class SelectEntryToEditPage extends StatefulWidget {
   final int patientId;
   final List<DiaryEntry> entries;
   final List<PinnedParameter> pinnedParameters;
+  final List<String> allIndicators;
 
   const SelectEntryToEditPage({
     super.key,
@@ -66,6 +66,7 @@ class SelectEntryToEditPage extends StatefulWidget {
     required this.patientId,
     required this.entries,
     this.pinnedParameters = const [],
+    this.allIndicators = const [],
   });
   static const String routeName = '/select-entry-to-edit';
 
@@ -92,8 +93,8 @@ class _SelectEntryToEditPageState extends State<SelectEntryToEditPage> {
     }
     // Initialize selected pinned indicator keys from provided pinnedParameters
     _selectedPinnedIndicatorKeys.addAll(pinnedKeys);
-    // Initialize "all" indicator keys from existing entries
-    _selectedAllIndicatorKeys.addAll(widget.entries.map((e) => e.parameterKey));
+    // Initialize "all" indicator keys from saved allIndicators (settings.all_indicators)
+    _selectedAllIndicatorKeys.addAll(widget.allIndicators);
   }
 
   /// Получить человекочитаемое название показателя по ключу API (используется в диалоге)
@@ -149,8 +150,13 @@ class _SelectEntryToEditPageState extends State<SelectEntryToEditPage> {
     if (value is Map) {
       // Для blood_pressure
       if (entry.parameterKey == 'blood_pressure') {
-        final systolic = value['systolic'] ?? value['sys'] ?? 0;
-        final diastolic = value['diastolic'] ?? value['dia'] ?? 0;
+        dynamic bpValue = value;
+        // Если значение вложено в {value: {...}}, извлекаем его
+        if (bpValue.containsKey('value') && bpValue['value'] is Map) {
+          bpValue = bpValue['value'];
+        }
+        final systolic = bpValue['systolic'] ?? bpValue['sys'] ?? 0;
+        final diastolic = bpValue['diastolic'] ?? bpValue['dia'] ?? 0;
         return '$systolic/$diastolic мм рт.ст.';
       }
 
@@ -234,6 +240,7 @@ class _SelectEntryToEditPageState extends State<SelectEntryToEditPage> {
         entries: _pinnedEntries,
         selectedEntries: _selectedPinnedEntries,
         blockedEntries: null,
+        pinnedParameters: widget.pinnedParameters,
         diaryId: widget.diaryId,
         patientId: widget.patientId,
         initialSelectedIndicatorKeys: widget.pinnedParameters
@@ -252,6 +259,8 @@ class _SelectEntryToEditPageState extends State<SelectEntryToEditPage> {
   }
 
   void _openAllEntriesDialog() {
+    // Получаем ключи закрепленных показателей для блокировки
+    final pinnedKeys = widget.pinnedParameters.map((p) => p.key).toSet();
     showDialog(
       context: context,
       builder: (context) => _EntriesSelectionDialog(
@@ -262,11 +271,11 @@ class _SelectEntryToEditPageState extends State<SelectEntryToEditPage> {
         entries: _allEntries,
         selectedEntries: _selectedAllEntries,
         blockedEntries: null,
+        blockedIndicatorKeys: pinnedKeys, // Блокируем закрепленные показатели
+        pinnedParameters: widget.pinnedParameters,
         diaryId: widget.diaryId,
         patientId: widget.patientId,
-        initialSelectedIndicatorKeys: widget.entries
-            .map((e) => e.parameterKey)
-            .toSet(),
+        initialSelectedIndicatorKeys: widget.allIndicators.toSet(),
         onSelectionChanged: (selected, selectedKeys) {
           setState(() {
             _selectedAllEntries.clear();
@@ -298,68 +307,6 @@ class _SelectEntryToEditPageState extends State<SelectEntryToEditPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.entries.isEmpty) {
-      return Scaffold(
-        backgroundColor: const Color(0xFFF7F7F8),
-        appBar: AppBar(
-          backgroundColor: Colors.white,
-          elevation: 0,
-          leading: IconButton(
-            icon: Image.asset(
-              AppIcons.back,
-              width: 24,
-              height: 24,
-              fit: BoxFit.contain,
-            ),
-            onPressed: () => context.pop(),
-          ),
-          title: Text(
-            'Выберите запись для редактирования',
-            style: GoogleFonts.firaSans(
-              color: Colors.grey.shade900,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-        body: SafeArea(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.inbox_outlined,
-                    size: 64,
-                    color: Colors.grey.shade400,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Нет записей для редактирования',
-                    style: GoogleFonts.firaSans(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade700,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Создайте записи в дневнике, чтобы их можно было редактировать',
-                    style: GoogleFonts.firaSans(
-                      fontSize: 14,
-                      color: Colors.grey.shade600,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F8),
       appBar: AppBar(
@@ -461,9 +408,7 @@ class _SelectEntryToEditPageState extends State<SelectEntryToEditPage> {
                               ),
                               elevation: 0,
                             ),
-                            onPressed: _pinnedEntries.isEmpty
-                                ? null
-                                : _openPinnedEntriesDialog,
+                            onPressed: _openPinnedEntriesDialog,
                             child: Builder(
                               builder: (ctx) {
                                 final uniqueSelected = <String>{}
@@ -531,11 +476,9 @@ class _SelectEntryToEditPageState extends State<SelectEntryToEditPage> {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                             ),
-                            onPressed: _allEntries.isEmpty
-                                ? null
-                                : _openAllEntriesDialog,
+                            onPressed: _openAllEntriesDialog,
                             child: Text(
-                              'Выбрать (${_allEntries.length})',
+                              'Выбрать (${_selectedAllIndicatorKeys.length})',
                               style: GoogleFonts.firaSans(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
@@ -566,6 +509,12 @@ class _EntriesSelectionDialog extends StatefulWidget {
   final List<DiaryEntry> entries;
   final Set<DiaryEntry> selectedEntries;
   final Set<DiaryEntry>? blockedEntries;
+
+  /// Ключи показателей, которые заблокированы для выбора (например, закрепленные)
+  final Set<String>? blockedIndicatorKeys;
+
+  /// Текущие закреплённые параметры (для сохранения при обновлении all_indicators)
+  final List<PinnedParameter> pinnedParameters;
   final int diaryId;
   final int patientId;
   final Set<String> initialSelectedIndicatorKeys;
@@ -579,6 +528,8 @@ class _EntriesSelectionDialog extends StatefulWidget {
     required this.entries,
     required this.selectedEntries,
     this.blockedEntries,
+    this.blockedIndicatorKeys,
+    this.pinnedParameters = const [],
     required this.diaryId,
     required this.patientId,
     this.initialSelectedIndicatorKeys = const {},
@@ -676,8 +627,13 @@ class _EntriesSelectionDialogState extends State<_EntriesSelectionDialog> {
 
     if (value is Map) {
       if (entry.parameterKey == 'blood_pressure') {
-        final systolic = value['systolic'] ?? value['sys'] ?? 0;
-        final diastolic = value['diastolic'] ?? value['dia'] ?? 0;
+        dynamic bpValue = value;
+        // Если значение вложено в {value: {...}}, извлекаем его
+        if (bpValue.containsKey('value') && bpValue['value'] is Map) {
+          bpValue = bpValue['value'];
+        }
+        final systolic = bpValue['systolic'] ?? bpValue['sys'] ?? 0;
+        final diastolic = bpValue['diastolic'] ?? bpValue['dia'] ?? 0;
         return '$systolic/$diastolic мм рт.ст.';
       }
 
@@ -810,6 +766,7 @@ class _EntriesSelectionDialogState extends State<_EntriesSelectionDialog> {
     Map<String, List<DiaryEntry>> groupedEntries,
   ) {
     final totalSelected = _countSelectedIndicators(groupedEntries);
+    final blockedKeys = widget.blockedIndicatorKeys ?? {};
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -842,6 +799,7 @@ class _EntriesSelectionDialogState extends State<_EntriesSelectionDialog> {
                 entries.any((entry) => _selectedEntries.contains(entry));
             final isKeySelected = _selectedIndicatorKeys.contains(indicatorKey);
             final isSelected = isEntriesSelected || isKeySelected;
+            final isBlocked = blockedKeys.contains(indicatorKey);
             final indicatorLabel = _getIndicatorLabel(indicatorKey);
             final displayLabel = indicatorLabel.replaceAll(
               RegExp(r'\s*\(\d+\)\s*$'),
@@ -849,61 +807,74 @@ class _EntriesSelectionDialogState extends State<_EntriesSelectionDialog> {
             );
 
             return InkWell(
-              onTap: () {
-                setState(() {
-                  // If currently selected (either by entries or by key) -> unselect both
-                  if (isSelected) {
-                    if (hasEntries) {
-                      _selectedEntries.removeAll(entries);
-                    }
-                    _selectedIndicatorKeys.remove(indicatorKey);
-                    return;
-                  }
+              onTap: isBlocked
+                  ? null // Заблокированные показатели не кликабельны
+                  : () {
+                      setState(() {
+                        // If currently selected (either by entries or by key) -> unselect both
+                        if (isSelected) {
+                          if (hasEntries) {
+                            _selectedEntries.removeAll(entries);
+                          }
+                          _selectedIndicatorKeys.remove(indicatorKey);
+                          return;
+                        }
 
-                  // Otherwise select (respecting maxIndicatorSelection)
-                  if (hasEntries) {
-                    if (widget.maxIndicatorSelection == null ||
-                        totalSelected < widget.maxIndicatorSelection!) {
-                      _selectedEntries.addAll(entries);
-                    } else {
-                      _showMaxSelectionDialog();
-                    }
-                  } else {
-                    if (widget.maxIndicatorSelection == null ||
-                        totalSelected < widget.maxIndicatorSelection!) {
-                      _selectedIndicatorKeys.add(indicatorKey);
-                    } else {
-                      _showMaxSelectionDialog();
-                    }
-                  }
-                });
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: isSelected ? AppConfig.primaryColor : Colors.white,
-                  borderRadius: BorderRadius.circular(100),
-                  border: Border.all(
-                    color: isSelected
-                        ? AppConfig.primaryColor
-                        : AppConfig.primaryColor.withOpacity(0.3),
-                    width: 1.5,
+                        // Otherwise select (respecting maxIndicatorSelection)
+                        if (hasEntries) {
+                          if (widget.maxIndicatorSelection == null ||
+                              totalSelected < widget.maxIndicatorSelection!) {
+                            _selectedEntries.addAll(entries);
+                          } else {
+                            _showMaxSelectionDialog();
+                          }
+                        } else {
+                          if (widget.maxIndicatorSelection == null ||
+                              totalSelected < widget.maxIndicatorSelection!) {
+                            _selectedIndicatorKeys.add(indicatorKey);
+                          } else {
+                            _showMaxSelectionDialog();
+                          }
+                        }
+                      });
+                    },
+              child: Opacity(
+                opacity: isBlocked ? 0.5 : 1.0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
                   ),
-                ),
-                child: Center(
-                  child: Text(
-                    displayLabel,
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.firaSans(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: isSelected ? Colors.white : Colors.grey.shade800,
+                  decoration: BoxDecoration(
+                    color: isBlocked
+                        ? Colors.grey.shade300
+                        : (isSelected ? AppConfig.primaryColor : Colors.white),
+                    borderRadius: BorderRadius.circular(100),
+                    border: Border.all(
+                      color: isBlocked
+                          ? Colors.grey.shade400
+                          : (isSelected
+                                ? AppConfig.primaryColor
+                                : AppConfig.primaryColor.withOpacity(0.3)),
+                      width: 1.5,
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                  ),
+                  child: Center(
+                    child: Text(
+                      displayLabel,
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.firaSans(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: isBlocked
+                            ? Colors.grey.shade600
+                            : (isSelected
+                                  ? Colors.white
+                                  : Colors.grey.shade800),
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ),
               ),
@@ -1121,69 +1092,33 @@ class _EntriesSelectionDialogState extends State<_EntriesSelectionDialog> {
       final repository = DiaryRepository();
 
       if (widget.maxIndicatorSelection == null) {
-        // Это диалог "Все показатели" -> используем sync API
-        final entriesPayload = <Map<String, dynamic>>[];
+        // Это диалог "Все показатели" -> используем PATCH /diary/pinned с settings.all_indicators
+        // Собираем все выбранные ключи показателей
+        final allIndicatorKeys = <String>{};
 
-        // Существующие выбранные записи -> обновление
+        // Добавляем ключи из выбранных записей
         for (final entry in _selectedEntries) {
-          final valuePayload = entry.value is Map
-              ? entry.value
-              : {'value': entry.value};
-          final map = <String, dynamic>{
-            'id': entry.id,
-            'type': _getIndicatorType(entry.parameterKey),
-            'key': entry.parameterKey,
-            'value': valuePayload,
-            'recorded_at': entry.recordedAt.toUtc().toIso8601String(),
-          };
-          if (entry.notes != null) map['notes'] = entry.notes;
-          entriesPayload.add(map);
+          allIndicatorKeys.add(entry.parameterKey);
         }
 
-        // Новые выбранные ключи (без записей) -> создание
-        final selectedKeys = <String>{};
-        selectedKeys.addAll(_selectedIndicatorKeys);
-        selectedKeys.addAll(_customCareIndicators);
-        selectedKeys.addAll(_customPhysicalIndicators);
-        selectedKeys.addAll(_customExcretionIndicators);
-        selectedKeys.addAll(_customSymptomIndicators);
+        // Добавляем выбранные ключи без записей
+        allIndicatorKeys.addAll(_selectedIndicatorKeys);
 
-        // Убираем ключи, которые уже присутствуют в _selectedEntries
-        final existingKeys = _selectedEntries
-            .map((e) => e.parameterKey)
-            .toSet();
-        for (final key in selectedKeys.difference(existingKeys)) {
-          final type = _getIndicatorType(key);
-          dynamic value;
-          if (type == 'care') {
-            value = {'done': true};
-          } else if (type == 'physical') {
-            value = {'value': null};
-          } else {
-            value = {'value': null};
-          }
-          entriesPayload.add({
-            'type': type,
-            'key': key,
-            'value': value,
-            'recorded_at': DateTime.now().toUtc().toIso8601String(),
-          });
-        }
+        // Добавляем все кастомные показатели
+        allIndicatorKeys.addAll(_customCareIndicators);
+        allIndicatorKeys.addAll(_customPhysicalIndicators);
+        allIndicatorKeys.addAll(_customExcretionIndicators);
+        allIndicatorKeys.addAll(_customSymptomIndicators);
 
-        // Вызов sync API
-        final result = await repository.syncEntries(
-          diaryId: widget.diaryId,
-          entries: entriesPayload,
-          deleteMissing: false,
+        // Вызываем API для сохранения all_indicators
+        await repository.saveAllIndicators(
+          patientId: widget.patientId,
+          allIndicators: allIndicatorKeys.toList(),
+          currentPinnedParameters: widget.pinnedParameters,
         );
 
         // Закрываем индикатор загрузки
         if (mounted) Navigator.of(context).pop();
-
-        // Обновляем локальный стейт: загрузим дневник заново
-        if (context.mounted) {
-          context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
-        }
 
         // Сохраняем выбранные записи + выбранные ключи показателей
         widget.onSelectionChanged(_selectedEntries, _selectedIndicatorKeys);
@@ -1191,12 +1126,17 @@ class _EntriesSelectionDialogState extends State<_EntriesSelectionDialog> {
         // Закрываем диалог
         if (mounted) Navigator.of(context).pop();
 
+        // Закрываем страницу с результатом true для обновления родительской страницы
+        if (mounted) {
+          Navigator.of(context).pop(true);
+        }
+
         // Показать успех
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                result['message']?.toString() ?? 'Успешно',
+                'Показатели успешно сохранены',
                 style: GoogleFonts.firaSans(),
               ),
               backgroundColor: Colors.green,
@@ -1219,6 +1159,11 @@ class _EntriesSelectionDialogState extends State<_EntriesSelectionDialog> {
         // Закрываем диалог
         if (mounted) Navigator.of(context).pop();
 
+        // Закрываем страницу с результатом true для обновления родительской страницы
+        if (mounted) {
+          Navigator.of(context).pop(true);
+        }
+
         // Показываем сообщение об успехе
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1236,19 +1181,10 @@ class _EntriesSelectionDialogState extends State<_EntriesSelectionDialog> {
       // Закрываем индикатор загрузки
       if (mounted) Navigator.of(context).pop();
 
-      // Логируем детально в консоль с pretty JSON полезной полезной информацией
-      try {
-        final pretty = const JsonEncoder.withIndent(
-          '  ',
-        ).convert(pinnedParameters.map((p) => p.toJson()).toList());
-        log.e(
-          'Ошибка при сохранении закрепленных параметров. diaryId=${widget.diaryId}, patientId=${widget.patientId}\nPayload:\n$pretty',
-          error: e,
-          stackTrace: st,
-        );
-      } catch (logErr) {
-        log.e('Ошибка логирования payload: $logErr');
-      }
+      // Логируем детально в консоль
+      print('Ошибка при сохранении закрепленных параметров');
+      print('diaryId=${widget.diaryId}, patientId=${widget.patientId}');
+      print('Payload: ${pinnedParameters.map((p) => p.toJson()).toList()}');
 
       // Показываем ошибку пользователю
       if (mounted) {

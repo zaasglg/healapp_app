@@ -9,6 +9,18 @@ import '../../../repositories/alarm_repository.dart';
 import '../dialogs/alarm_dialog.dart';
 import '../widgets/custom_switch.dart';
 
+String _getFirstAlarmTime(List<String> times) {
+  if (times.isEmpty) return '00:00';
+  final sorted = List<String>.from(times)..sort();
+  return sorted.first;
+}
+
+String _formatAlarmTimes(List<String> times) {
+  if (times.isEmpty) return '—';
+  final sorted = List<String>.from(times)..sort();
+  return sorted.join(', ');
+}
+
 /// Таб "Будильник" для страницы дневника здоровья
 class AlarmTab extends StatelessWidget {
   final int diaryId;
@@ -114,36 +126,38 @@ class AlarmTab extends StatelessWidget {
   Widget _buildAlarmListWithInactive(BuildContext context, List<Alarm> alarms) {
     final now = DateTime.now();
     final today = now.weekday; // 1=понедельник, 7=воскресенье
-    
+
     // Фильтруем будильники: активные на сегодня + все неактивные
-    final todayActiveAlarms = alarms.where((alarm) => 
-      alarm.isActive && alarm.daysOfWeek.contains(today)
-    ).toList();
-    
+    final todayActiveAlarms = alarms
+        .where((alarm) => alarm.isActive && alarm.daysOfWeek.contains(today))
+        .toList();
+
     final inactiveAlarms = alarms.where((alarm) => !alarm.isActive).toList();
-    
+
     // Объединяем все будильники
     final allDisplayAlarms = [...todayActiveAlarms, ...inactiveAlarms];
-    
-    // Сортируем по времени (берем первое время из списка times)
+
+    // Сортируем по времени (берем минимальное время из списка times)
     allDisplayAlarms.sort((a, b) {
-      final aTime = a.times.isNotEmpty ? a.times.first : '00:00';
-      final bTime = b.times.isNotEmpty ? b.times.first : '00:00';
-      
+      final aTime = _getFirstAlarmTime(a.times);
+      final bTime = _getFirstAlarmTime(b.times);
+
       final aParts = aTime.split(':');
       final bParts = bTime.split(':');
-      
-      final aMinutes = (int.tryParse(aParts[0]) ?? 0) * 60 + (int.tryParse(aParts[1]) ?? 0);
-      final bMinutes = (int.tryParse(bParts[0]) ?? 0) * 60 + (int.tryParse(bParts[1]) ?? 0);
-      
+
+      final aMinutes =
+          (int.tryParse(aParts[0]) ?? 0) * 60 + (int.tryParse(aParts[1]) ?? 0);
+      final bMinutes =
+          (int.tryParse(bParts[0]) ?? 0) * 60 + (int.tryParse(bParts[1]) ?? 0);
+
       return aMinutes.compareTo(bMinutes);
     });
-    
+
     // Если нет будильников вообще, показываем пустое состояние
     if (allDisplayAlarms.isEmpty) {
       return _buildAllAlarmsList(context, alarms);
     }
-    
+
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 100),
@@ -169,16 +183,6 @@ class AlarmTab extends StatelessWidget {
       },
     );
   }
-
-
-
-
-
-
-
-
-
-
 
   Widget _buildAddButton(BuildContext context) {
     return Positioned(
@@ -310,7 +314,9 @@ class _AlarmCard extends StatelessWidget {
                       style: GoogleFonts.firaSans(
                         fontSize: 20,
                         fontWeight: FontWeight.w700,
-                        color: alarm.isActive ? const Color(0xFF333333) : Colors.grey.shade400,
+                        color: alarm.isActive
+                            ? const Color(0xFF333333)
+                            : Colors.grey.shade400,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -377,16 +383,16 @@ class _AlarmCard extends StatelessWidget {
   Widget _buildNextAlarmInfo(Alarm alarm) {
     final now = DateTime.now();
     final today = now.weekday;
-    
+
     // Показываем информацию только для будильников на сегодня
     if (!alarm.daysOfWeek.contains(today)) {
       return const SizedBox.shrink();
     }
-    
+
     final currentMinutes = now.hour * 60 + now.minute;
     final currentSeconds = now.second;
     int? nextTimeMinutes;
-    
+
     // Находим ближайшее время сегодня
     for (final timeStr in alarm.times) {
       final parts = timeStr.split(':');
@@ -394,21 +400,21 @@ class _AlarmCard extends StatelessWidget {
         final hour = int.tryParse(parts[0]) ?? 0;
         final minute = int.tryParse(parts[1]) ?? 0;
         final timeMinutes = hour * 60 + minute;
-        
+
         // Включаем текущую минуту, если секунды меньше 50
         // Это даёт время пользователю увидеть "через 0 мин" перед срабатыванием
-        if (timeMinutes > currentMinutes || 
+        if (timeMinutes > currentMinutes ||
             (timeMinutes == currentMinutes && currentSeconds < 50)) {
           nextTimeMinutes = timeMinutes;
           break;
         }
       }
     }
-    
+
     if (nextTimeMinutes != null) {
       final diffMinutes = nextTimeMinutes - currentMinutes;
       String timeUntil;
-      
+
       if (diffMinutes == 0) {
         // Если будильник в эту же минуту
         timeUntil = 'сейчас';
@@ -423,7 +429,7 @@ class _AlarmCard extends StatelessWidget {
           timeUntil = 'через $hours ч $minutes мин';
         }
       }
-      
+
       return Padding(
         padding: const EdgeInsets.only(bottom: 4),
         child: Text(
@@ -436,52 +442,14 @@ class _AlarmCard extends StatelessWidget {
         ),
       );
     }
-    
+
     return const SizedBox.shrink();
   }
 
-  /// Получает текст следующего времени срабатывания
+  /// Получает текст для отображения времени срабатывания
   String _getNextAlarmTimeText(Alarm alarm) {
-    if (!alarm.isActive) {
-      return alarm.times.join(', ');
-    }
-    
-    final now = DateTime.now();
-    final today = now.weekday;
-    
-    // Если будильник не на сегодня, показываем все времена
-    if (!alarm.daysOfWeek.contains(today)) {
-      return alarm.times.join(', ');
-    }
-    
-    // Находим ближайшее время сегодня
-    final currentMinutes = now.hour * 60 + now.minute;
-    String? nextTime;
-    
-    for (final timeStr in alarm.times) {
-      final parts = timeStr.split(':');
-      if (parts.length == 2) {
-        final hour = int.tryParse(parts[0]) ?? 0;
-        final minute = int.tryParse(parts[1]) ?? 0;
-        final timeMinutes = hour * 60 + minute;
-        
-        if (timeMinutes > currentMinutes) {
-          nextTime = timeStr;
-          break;
-        }
-      }
-    }
-    
-    // Если есть ближайшее время сегодня, показываем его
-    if (nextTime != null) {
-      return nextTime;
-    }
-    
-    // Иначе показываем все времена
-    return alarm.times.join(', ');
+    return _formatAlarmTimes(alarm.times);
   }
-
-
 
   void _showEditDialog(BuildContext context) {
     showDialog(

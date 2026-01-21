@@ -30,7 +30,9 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
     final cached = AppCache.patients.get(cacheKey);
     if (cached != null && !event.forceRefresh) {
       log.d('Используем кэшированные данные пациентов');
-      final patients = cached.map((p) => Patient.fromJson(p as Map<String, dynamic>)).toList();
+      final patients = cached
+          .map((p) => Patient.fromJson(p as Map<String, dynamic>))
+          .toList();
       emit(PatientLoaded(patients));
       // Загружаем в фоне для обновления
       _loadPatientsInBackground(emit);
@@ -42,12 +44,9 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
     try {
       final patients = await _patientRepository.getPatients();
       log.i('Загружено ${patients.length} пациентов');
-      
+
       // Сохраняем в кэш
-      AppCache.patients.put(
-        cacheKey,
-        patients.map((p) => p.toJson()).toList(),
-      );
+      AppCache.patients.put(cacheKey, patients.map((p) => p.toJson()).toList());
 
       for (final p in patients) {
         log.d(

@@ -7,11 +7,17 @@ import 'route_sheet_state.dart';
 class RouteSheetCubit extends Cubit<RouteSheetState> {
   final RouteSheetRepository _repository;
   final int patientId;
+  final bool isCaregiver;
 
-  RouteSheetCubit({required this.patientId, RouteSheetRepository? repository})
-    : _repository = repository ?? RouteSheetRepository(),
-      super(RouteSheetState(selectedDate: DateTime.now())) {
-    log.d('RouteSheetCubit: Инициализация для пациента $patientId');
+  RouteSheetCubit({
+    required this.patientId,
+    this.isCaregiver = false,
+    RouteSheetRepository? repository,
+  }) : _repository = repository ?? RouteSheetRepository(),
+       super(RouteSheetState(selectedDate: DateTime.now())) {
+    log.d(
+      'RouteSheetCubit: Инициализация для пациента $patientId, isCaregiver=$isCaregiver',
+    );
   }
 
   /// Загрузить маршрутный лист на выбранную дату
@@ -20,7 +26,9 @@ class RouteSheetCubit extends Cubit<RouteSheetState> {
     log.d(
       'RouteSheetCubit.loadRouteSheet: Загрузка на дату ${targetDate.toIso8601String()}',
     );
-    log.d('RouteSheetCubit.loadRouteSheet: patientId = $patientId');
+    log.d(
+      'RouteSheetCubit.loadRouteSheet: patientId = $patientId, isCaregiver = $isCaregiver',
+    );
 
     emit(state.copyWith(isLoading: true, errorMessage: null));
 
@@ -29,21 +37,19 @@ class RouteSheetCubit extends Cubit<RouteSheetState> {
         'RouteSheetCubit.loadRouteSheet: Отправка запроса в репозиторий...',
       );
 
-      final response = await _repository.getRouteSheet(
-        patientId: patientId,
-        date: targetDate,
-      );
-
-      log.i(
-        'RouteSheetCubit.loadRouteSheet: Получено ${response.tasks.length} задач',
-      );
-      log.d(
-        'RouteSheetCubit.loadRouteSheet: Summary - total: ${response.summary.total}, pending: ${response.summary.pending}',
-      );
-
-      for (var task in response.tasks) {
+      final RouteSheetResponse response;
+      if (isCaregiver) {
+        // Для сиделок загружаем только их задачи
+        log.d('RouteSheetCubit: Загрузка задач сиделки через getMyTasks');
+        response = await _repository.getMyTasks(date: targetDate);
+      } else {
+        // Для администраторов/клиентов загружаем маршрутный лист пациента
         log.d(
-          '  - Задача: ${task.title}, время: ${task.timeRange}, статус: ${task.status.value}',
+          'RouteSheetCubit: Загрузка маршрутного листа пациента через getRouteSheet',
+        );
+        response = await _repository.getRouteSheet(
+          patientId: patientId,
+          date: targetDate,
         );
       }
 
@@ -55,8 +61,6 @@ class RouteSheetCubit extends Cubit<RouteSheetState> {
           isLoading: false,
         ),
       );
-
-      log.i('RouteSheetCubit.loadRouteSheet: Состояние обновлено успешно');
     } catch (e, stackTrace) {
       log.e('RouteSheetCubit.loadRouteSheet: ОШИБКА: $e');
       log.e('RouteSheetCubit.loadRouteSheet: StackTrace: $stackTrace');
@@ -229,10 +233,6 @@ class RouteSheetCubit extends Cubit<RouteSheetState> {
     String? comment,
     Map<String, dynamic>? value,
   }) async {
-    log.d('RouteSheetCubit.completeTask: Выполнение задачи $taskId');
-    log.d('  - comment: $comment');
-    log.d('  - value: $value');
-
     try {
       final updatedTask = await _repository.completeTask(
         taskId: taskId,
@@ -255,7 +255,6 @@ class RouteSheetCubit extends Cubit<RouteSheetState> {
       }).toList();
 
       emit(state.copyWith(tasks: updatedTasks));
-      log.i('RouteSheetCubit.completeTask: Задача $taskId выполнена');
     } catch (e, stackTrace) {
       log.e('RouteSheetCubit.completeTask: ОШИБКА: $e');
       log.e('RouteSheetCubit.completeTask: StackTrace: $stackTrace');

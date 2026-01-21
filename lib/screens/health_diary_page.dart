@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'dart:async';
-import 'dart:convert';
 import 'package:go_router/go_router.dart';
 import '../utils/app_logger.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -12,15 +11,13 @@ import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../config/app_config.dart';
 import '../core/network/api_client.dart';
-import '../core/network/api_exceptions.dart';
 import '../utils/app_icons.dart';
 import '../bloc/route_sheet/route_sheet_cubit.dart';
 import '../bloc/route_sheet/route_sheet_state.dart';
 import '../bloc/diary/diary_bloc.dart';
 import '../bloc/diary/diary_event.dart';
 import '../bloc/diary/diary_state.dart';
-import '../bloc/organization/organization_bloc.dart';
-import '../bloc/organization/organization_state.dart';
+
 import '../bloc/auth/auth_bloc.dart';
 import '../bloc/auth/auth_state.dart';
 import '../services/pinned_notification_service.dart';
@@ -31,7 +28,14 @@ import '../repositories/employee_repository.dart';
 import '../repositories/invitation_repository.dart';
 import '../repositories/organization_repository.dart';
 import 'package:toastification/toastification.dart';
+
+// Health Diary компоненты
 import 'health_diary/tabs/alarm_tab.dart';
+import 'health_diary/widgets/widgets.dart';
+import 'health_diary/widgets/modals/modals.dart' as modals;
+import 'health_diary/widgets/modals/time_picker_modal.dart';
+// Скрываем TaskStatus из route_sheet, т.к. используем из route_sheet_state.dart
+import '../utils/health_diary/health_diary_utils.dart' as diary_utils;
 
 class HealthDiaryPage extends StatefulWidget {
   final int diaryId;
@@ -60,6 +64,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
   bool _isCareExpanded = false;
   bool _isPhysicalExpanded = false;
   bool _isExcretionExpanded = false;
+  bool _isSymptomsExpanded = false;
+  bool _isCustomIndicatorsExpanded = false;
   bool _isAccessManagementExpanded = false;
   bool _isHistoryDatePickerExpanded = false;
   bool _isRouteSheetDatePickerExpanded = false;
@@ -105,6 +111,17 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
 
   static const List<String> _excretionIndicatorKeys = ['urine', 'defecation'];
 
+  static const List<String> _symptomIndicatorKeys = [
+    'nausea',
+    'dyspnea',
+    'cough',
+    'hiccup',
+    'vomiting',
+    'itching',
+    'dry_mouth',
+    'taste_disorder',
+  ];
+
   String _getParameterType(String key) {
     const physicalKeys = [
       'blood_pressure',
@@ -120,6 +137,28 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     return 'care';
   }
 
+  List<String> _normalizeIndicatorKeys(dynamic rawIndicators) {
+    if (rawIndicators == null) return [];
+
+    if (rawIndicators is List) {
+      return rawIndicators
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+
+    if (rawIndicators is String) {
+      final cleaned = rawIndicators.replaceAll('[', '').replaceAll(']', '');
+      return cleaned
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+
+    return [];
+  }
+
   String? _getLastValue(Diary? diary, String key) {
     if (diary == null) return null;
     // Фильтруем записи по ключу
@@ -127,16 +166,159 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     if (entries.isEmpty) return null;
     // Сортируем по дате (свежие первые)
     entries.sort((a, b) => b.recordedAt.compareTo(a.recordedAt));
-    return entries.first.value?.toString();
+
+    var value = entries.first.value;
+
+    // Обработка Map значений (например, {value: "Парацетамол"})
+    if (value is Map) {
+      // Для давления
+      if (key == 'blood_pressure') {
+        log.d('_getLastValue: blood_pressure raw value = $value');
+        dynamic bpValue = value;
+
+        // Рекурсивно извлекаем вложенные значения {value: {value: {...}}}
+        while (bpValue is Map &&
+            bpValue.containsKey('value') &&
+            bpValue['value'] is Map) {
+          log.d('_getLastValue: unwrapping, current = $bpValue');
+          bpValue = bpValue['value'];
+        }
+
+        log.d('_getLastValue: final bpValue = $bpValue');
+
+        // Если после извлечения получили Map с ключом 'value' и строковым значением
+        if (bpValue is Map &&
+            bpValue.containsKey('value') &&
+            bpValue['value'] is String) {
+          final stringValue = bpValue['value'] as String;
+          log.d('_getLastValue: Found string value: $stringValue');
+
+          // Парсим строку формата "120/80 мм рт.ст." или "120/80"
+          final match = RegExp(r'(\d+)/(\d+)').firstMatch(stringValue);
+          if (match != null) {
+            final systolic = int.tryParse(match.group(1) ?? '0') ?? 0;
+            final diastolic = int.tryParse(match.group(2) ?? '0') ?? 0;
+            log.d(
+              '_getLastValue: Parsed from string: systolic=$systolic, diastolic=$diastolic',
+            );
+
+            if (systolic == 0 && diastolic == 0) {
+              return '—';
+            }
+            return '$systolic/$diastolic';
+          }
+          // Если не удалось распарсить, возвращаем как есть без единиц измерения
+          return stringValue.replaceAll(' мм рт.ст.', '').replaceAll(' мм', '');
+        }
+
+        // Теперь bpValue должен содержать {systolic: X, diastolic: Y} или {sys: X, dia: Y}
+        if (bpValue is Map) {
+          final systolic = bpValue['systolic'] ?? bpValue['sys'] ?? 0;
+          final diastolic = bpValue['diastolic'] ?? bpValue['dia'] ?? 0;
+
+          log.d('_getLastValue: systolic=$systolic, diastolic=$diastolic');
+
+          // Если оба значения 0, возможно данные не были сохранены
+          if (systolic == 0 && diastolic == 0) {
+            log.w('_getLastValue: Both values are 0');
+            return '—';
+          }
+
+          return '$systolic/$diastolic';
+        }
+
+        // Если после извлечения не Map, возвращаем прочерк
+        return '—';
+      }
+
+      // Рекурсивное извлечение вложенного значения из цепочки {value: {value: {value: ...}}}
+      while (value is Map && value.containsKey('value')) {
+        value = value['value'];
+      }
+
+      // После извлечения проверяем финальный тип
+      if (value is bool) {
+        return value ? '✓' : '✗';
+      }
+
+      if (value is num) {
+        if (value == 1) return '✓';
+        if (value == 0) return '✗';
+        return value.toString();
+      }
+
+      // Для Map после извлечения value - берём первое значение
+      if (value is Map && value.isNotEmpty) {
+        final firstValue = value.values.first;
+        if (firstValue is bool) return firstValue ? '✓' : '✗';
+        final textValue = firstValue?.toString() ?? '—';
+        if (textValue.length > 12) {
+          return '${textValue.substring(0, 10)}...';
+        }
+        return textValue;
+      }
+
+      // Для текстовых значений - ограничиваем длину для круга
+      final textValue = value?.toString() ?? '—';
+      if (textValue.length > 12) {
+        return '${textValue.substring(0, 10)}...';
+      }
+      return textValue;
+    }
+
+    // Обработка строковых JSON-значений типа "{value: текст}"
+    if (value is String && value.startsWith('{') && value.contains('value:')) {
+      final regex = RegExp(r'\{value:\s*(.+?)\}');
+      final match = regex.firstMatch(value);
+      if (match != null && match.group(1) != null) {
+        final extractedValue = match.group(1)!.trim();
+        if (extractedValue.length > 12) {
+          return '${extractedValue.substring(0, 10)}...';
+        }
+        return extractedValue;
+      }
+    }
+
+    // Обработка булевых значений
+    if (value is bool) {
+      return value ? '✓' : '✗';
+    }
+
+    // Обработка числовых булевых представлений
+    if (value is num) {
+      if (value == 1) return '✓';
+      if (value == 0) return '✗';
+    }
+
+    // Для остальных текстовых значений - ограничиваем длину
+    final textValue = value?.toString() ?? '—';
+
+    // Проверка на случайное отображение Map.toString()
+    if (textValue.startsWith('{') && textValue.contains(':')) {
+      return '—';
+    }
+
+    if (textValue.length > 12) {
+      return '${textValue.substring(0, 10)}...';
+    }
+    return textValue;
   }
 
   Widget _buildIndicatorValueCircle(String? value) {
+    // Определяем размер шрифта в зависимости от длины значения
+    double fontSize = 22;
+    if (value != null && value.length > 8) {
+      fontSize = 16;
+    } else if (value != null && value.length > 5) {
+      fontSize = 20;
+    }
+
     return SizedBox(
       width: 90,
       height: 90,
       child: CustomPaint(
         size: const Size(75, 75),
-        painter: _DashedCirclePainter(),
+        painter: const DashedCirclePainter(),
         child: Center(
           child: value != null
               ? Padding(
@@ -144,11 +326,11 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                   child: Text(
                     value,
                     style: GoogleFonts.firaSans(
-                      fontSize: 22,
+                      fontSize: fontSize,
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
                     ),
-                    maxLines: 2,
+                    maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
                   ),
@@ -159,11 +341,494 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     );
   }
 
+  /// Типы параметров для определения виджета ввода
+  static const List<String> _booleanParams = [
+    'skin_moisturizing',
+    'hygiene',
+    'defecation',
+    'nausea',
+    'vomiting',
+    'dyspnea',
+    'itching',
+    'cough',
+    'dry_mouth',
+    'hiccup',
+    'taste_disorder',
+    'walk',
+    'urine',
+  ];
+
+  static const List<String> _textParams = [
+    'feeding',
+    'cognitive_games',
+    'medication',
+    'vitamins',
+    'meal',
+  ];
+
+  static const List<String> _measurementParams = [
+    'blood_pressure',
+    'temperature',
+    'pulse',
+    'saturation',
+    'oxygen_saturation',
+    'respiratory_rate',
+    'pain_level',
+    'sugar_level',
+    'blood_sugar',
+    'fluid_intake',
+    'urine_output',
+    'weight',
+  ];
+
+  /// Виджет ввода данных для закрепленного параметра
+  Widget _buildParameterInputWidget({
+    required PinnedParameter param,
+    required TextEditingController measurementController,
+    required BuildContext blocContext,
+    required int index,
+  }) {
+    final key = param.key;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [const Color(0xFF7DCAD6), const Color(0xFF55ACBF)],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Заполните:',
+            style: GoogleFonts.firaSans(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 4),
+          _buildInputForParameterType(
+            key,
+            measurementController,
+            blocContext,
+            index,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Строит виджет ввода в зависимости от типа параметра
+  Widget _buildInputForParameterType(
+    String key,
+    TextEditingController controller,
+    BuildContext blocContext,
+    int index,
+  ) {
+    // Булевые параметры — кнопки "Было" / "Не было"
+    if (_booleanParams.contains(key)) {
+      return ValueListenableBuilder<TextEditingValue>(
+        valueListenable: controller,
+        builder: (context, value, child) {
+          final isTrue = value.text == 'true';
+          final isFalse = value.text == 'false';
+
+          return Row(
+            children: [
+              Expanded(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => controller.text = 'true',
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      height: 48,
+                      decoration: BoxDecoration(
+                        gradient: isTrue
+                            ? const LinearGradient(
+                                colors: [Color(0xFF66BB6A), Color(0xFF43A047)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              )
+                            : null,
+                        color: isTrue
+                            ? null
+                            : Colors.white.withValues(alpha: 0.9),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isTrue
+                              ? const Color(0xFF43A047)
+                              : Colors.white.withValues(alpha: 0.3),
+                          width: 1.5,
+                        ),
+                        boxShadow: isTrue
+                            ? [
+                                BoxShadow(
+                                  color: const Color(
+                                    0xFF66BB6A,
+                                  ).withValues(alpha: 0.3),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ]
+                            : null,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.check_circle,
+                            color: isTrue ? Colors.white : Colors.grey.shade400,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Было',
+                            style: GoogleFonts.firaSans(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: isTrue
+                                  ? Colors.white
+                                  : Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => controller.text = 'false',
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      height: 48,
+                      decoration: BoxDecoration(
+                        gradient: isFalse
+                            ? const LinearGradient(
+                                colors: [Color(0xFFEF5350), Color(0xFFE53935)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              )
+                            : null,
+                        color: isFalse
+                            ? null
+                            : Colors.white.withValues(alpha: 0.9),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isFalse
+                              ? const Color(0xFFE53935)
+                              : Colors.white.withValues(alpha: 0.3),
+                          width: 1.5,
+                        ),
+                        boxShadow: isFalse
+                            ? [
+                                BoxShadow(
+                                  color: const Color(
+                                    0xFFEF5350,
+                                  ).withValues(alpha: 0.3),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ]
+                            : null,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.cancel,
+                            color: isFalse
+                                ? Colors.white
+                                : Colors.grey.shade400,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Не было',
+                            style: GoogleFonts.firaSans(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: isFalse
+                                  ? Colors.white
+                                  : Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    }
+
+    // Текстовые параметры
+    if (_textParams.contains(key)) {
+      String hint = 'Введите текст';
+      IconData icon = Icons.edit_note;
+
+      if (key == 'medication' || key == 'vitamins') {
+        hint = 'Название препарата';
+        icon = Icons.medication;
+      } else if (key == 'meal' || key == 'feeding') {
+        hint = 'Что было съедено';
+        icon = Icons.restaurant;
+      } else if (key == 'cognitive_games') {
+        hint = 'Описание активности';
+        icon = Icons.psychology;
+      }
+
+      return Container(
+        height: 48,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.95),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.3),
+            width: 1,
+          ),
+        ),
+        child: TextFormField(
+          controller: controller,
+          style: GoogleFonts.firaSans(
+            fontSize: 15,
+            color: Colors.grey.shade900,
+            fontWeight: FontWeight.w500,
+          ),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: GoogleFonts.firaSans(
+              fontSize: 14,
+              color: Colors.grey.shade400,
+            ),
+            prefixIcon: Icon(icon, color: Colors.grey.shade400, size: 20),
+            border: InputBorder.none,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 14,
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Параметры с измерениями
+    String hint = 'Внесите замер';
+    String? suffix;
+    IconData icon = Icons.show_chart;
+    TextInputType keyboardType = TextInputType.text;
+
+    // Специальная обработка для давления - два поля
+    if (key == 'blood_pressure') {
+      // Создаём контроллер для диастолического если ещё нет
+      if (!_diastolicControllers.containsKey(index)) {
+        _diastolicControllers[index] = TextEditingController();
+      }
+      final diastolicController = _diastolicControllers[index]!;
+
+      return Row(
+        children: [
+          // Систолическое давление
+          Expanded(
+            child: Container(
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.95),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.3),
+                  width: 1,
+                ),
+              ),
+              child: TextFormField(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                style: GoogleFonts.firaSans(
+                  fontSize: 15,
+                  color: Colors.grey.shade900,
+                  fontWeight: FontWeight.w600,
+                ),
+                decoration: InputDecoration(
+                  hintText: '120',
+                  hintStyle: GoogleFonts.firaSans(
+                    fontSize: 14,
+                    color: Colors.grey.shade400,
+                  ),
+                  prefixIcon: Icon(
+                    Icons.favorite,
+                    color: Colors.grey.shade400,
+                    size: 20,
+                  ),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 14,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // Разделитель /
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Text(
+              '/',
+              style: GoogleFonts.firaSans(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
+          ),
+          // Диастолическое давление
+          Expanded(
+            child: Container(
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.95),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.3),
+                  width: 1,
+                ),
+              ),
+              child: TextFormField(
+                controller: diastolicController,
+                keyboardType: TextInputType.number,
+                style: GoogleFonts.firaSans(
+                  fontSize: 15,
+                  color: Colors.grey.shade900,
+                  fontWeight: FontWeight.w600,
+                ),
+                decoration: InputDecoration(
+                  hintText: '80',
+                  hintStyle: GoogleFonts.firaSans(
+                    fontSize: 14,
+                    color: Colors.grey.shade400,
+                  ),
+                  suffixText: 'мм',
+                  suffixStyle: GoogleFonts.firaSans(
+                    fontSize: 13,
+                    color: const Color(0xFF61B4C6),
+                    fontWeight: FontWeight.w600,
+                  ),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 14,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    } else if (key == 'temperature') {
+      hint = '36.6';
+      suffix = '°C';
+      icon = Icons.thermostat;
+      keyboardType = const TextInputType.numberWithOptions(decimal: true);
+    } else if (key == 'pulse') {
+      hint = '70';
+      suffix = 'уд/мин';
+      icon = Icons.monitor_heart;
+      keyboardType = TextInputType.number;
+    } else if (key == 'saturation' || key == 'oxygen_saturation') {
+      hint = '98';
+      suffix = '%';
+      icon = Icons.air;
+      keyboardType = TextInputType.number;
+    } else if (key == 'respiratory_rate') {
+      hint = '16';
+      suffix = 'вд/мин';
+      icon = Icons.air;
+      keyboardType = TextInputType.number;
+    } else if (key == 'pain_level') {
+      hint = '0-10';
+      icon = Icons.sentiment_dissatisfied;
+      keyboardType = TextInputType.number;
+    } else if (key == 'sugar_level' || key == 'blood_sugar') {
+      hint = '5.5';
+      suffix = 'ммоль/л';
+      icon = Icons.water_drop;
+      keyboardType = const TextInputType.numberWithOptions(decimal: true);
+    } else if (key == 'fluid_intake' || key == 'urine_output') {
+      hint = '250';
+      suffix = 'мл';
+      icon = Icons.local_drink;
+      keyboardType = TextInputType.number;
+    } else if (key == 'weight') {
+      hint = '70';
+      suffix = 'кг';
+      icon = Icons.monitor_weight;
+      keyboardType = const TextInputType.numberWithOptions(decimal: true);
+    } else if (key == 'diaper_change') {
+      hint = 'Время смены';
+      icon = Icons.baby_changing_station;
+    } else if (key == 'sleep') {
+      hint = 'Часов сна';
+      icon = Icons.nightlight;
+      keyboardType = const TextInputType.numberWithOptions(decimal: true);
+    }
+
+    return Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.95),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.3), width: 1),
+      ),
+      child: TextFormField(
+        controller: controller,
+        keyboardType: keyboardType,
+        style: GoogleFonts.firaSans(
+          fontSize: 15,
+          color: Colors.grey.shade900,
+          fontWeight: FontWeight.w600,
+        ),
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: GoogleFonts.firaSans(
+            fontSize: 14,
+            color: Colors.grey.shade400,
+          ),
+          prefixIcon: Icon(icon, color: Colors.grey.shade400, size: 20),
+          suffixText: suffix,
+          suffixStyle: GoogleFonts.firaSans(
+            fontSize: 13,
+            color: const Color(0xFF61B4C6),
+            fontWeight: FontWeight.w600,
+          ),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 14,
+          ),
+        ),
+      ),
+    );
+  }
+
   int? _animatingFromIndex; // Used during animation
   final Set<String> _selectedPhysicalIndicators = {};
   final Set<String> _selectedExcretionIndicators = {};
 
   final Map<int, TextEditingController> _measurementControllers = {};
+  final Map<int, TextEditingController> _diastolicControllers =
+      {}; // Для диастолического давления
   final Map<int, TextEditingController> _timeControllers = {};
   final Map<int, int> _fillCounts = {};
 
@@ -198,6 +863,9 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     _displayTimeTimer?.cancel();
     _indicatorAnimationController.dispose();
     for (final controller in _measurementControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _diastolicControllers.values) {
       controller.dispose();
     }
     for (final controller in _timeControllers.values) {
@@ -238,28 +906,18 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
   /// Загрузка списка доступов к дневнику
   Future<void> _loadDiaryAccess() async {
     if (_isLoadingAccess) {
-      log.d('_loadDiaryAccess: уже идет загрузка, пропускаем');
       return;
     }
-
-    log.d('=== Начало загрузки списка доступов ===');
-    log.d('Diary ID: ${widget.diaryId}');
 
     setState(() {
       _isLoadingAccess = true;
     });
 
     try {
-      log.d('Запрос getDiaryAccessList...');
       final accessList = await _organizationRepository.getDiaryAccessList(
         diaryId: widget.diaryId,
       );
-      log.d('Получен список доступов: ${accessList.length} записей');
-      log.d('Access list: $accessList');
-
-      log.d('Запрос getEmployees...');
       final employees = await _employeeRepository.getEmployees();
-      log.d('Получен список сотрудников: ${employees.length} записей');
 
       if (mounted) {
         setState(() {
@@ -267,13 +925,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
           _allEmployees = employees;
           _isLoadingAccess = false;
         });
-        log.d('Состояние обновлено успешно');
       }
     } catch (e) {
-      log.e('=== Ошибка загрузки данных ===');
-      log.e('Тип ошибки: ${e.runtimeType}');
-      log.e('Сообщение: $e');
-
       if (mounted) {
         setState(() {
           _isLoadingAccess = false;
@@ -287,20 +940,11 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     // Используем user_id если есть, иначе id сотрудника
     final userId = employee.userId ?? employee.id;
 
-    log.d('=== Начало назначения доступа ===');
-    log.d('Employee ID: ${employee.id}');
-    log.d('User ID: ${employee.userId}');
-    log.d('Используемый userId: $userId');
-    log.d('Patient ID: ${widget.patientId}');
-    log.d('Employee name: ${employee.fullName}');
-
     try {
-      log.d('Отправка запроса assignDiaryAccess...');
       await _organizationRepository.assignDiaryAccess(
         patientId: widget.patientId,
         userId: userId,
       );
-      log.d('Запрос assignDiaryAccess успешно выполнен');
 
       if (mounted) {
         toastification.show(
@@ -312,18 +956,10 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
           autoCloseDuration: const Duration(seconds: 3),
         );
 
-        log.d('Перезагрузка списка доступов...');
         // Перезагружаем список доступов
         _loadDiaryAccess();
       }
     } catch (e) {
-      log.e('=== Ошибка назначения доступа ===');
-      log.e('Тип ошибки: ${e.runtimeType}');
-      log.e('Сообщение: $e');
-      if (e is ApiException) {
-        log.e('Status code: ${e.statusCode}');
-      }
-
       if (mounted) {
         toastification.show(
           context: context,
@@ -359,7 +995,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         _loadDiaryAccess();
       }
     } catch (e) {
-      log.e('Ошибка отзыва доступа: $e');
       if (mounted) {
         toastification.show(
           context: context,
@@ -390,7 +1025,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
           });
         }
       } catch (e) {
-        log.e('Ошибка загрузки сотрудников: $e');
         if (mounted) {
           setState(() {
             _isLoadingAccess = false;
@@ -498,7 +1132,9 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
 
                   return ListTile(
                     leading: CircleAvatar(
-                      backgroundColor: AppConfig.primaryColor.withOpacity(0.1),
+                      backgroundColor: AppConfig.primaryColor.withValues(
+                        alpha: 0.1,
+                      ),
                       backgroundImage: employee.avatarUrl != null
                           ? NetworkImage(employee.avatarUrl!)
                           : null,
@@ -684,7 +1320,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -787,8 +1423,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(12),
                               border: Border.all(
-                                color: AppConfig.primaryColor.withOpacity(
-                                  isActive ? 0.5 : 0.2,
+                                color: AppConfig.primaryColor.withValues(
+                                  alpha: isActive ? 0.5 : 0.2,
                                 ),
                                 width: 2,
                               ),
@@ -934,7 +1570,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
 
           return BlocBuilder<AuthBloc, AuthState>(
             builder: (context, authState) {
-              // Определяем количество вкладок в зависимости от роли
+              // Определяем, является ли пользователь сиделкой
               final isOrganizationCaregiver =
                   authState is AuthAuthenticated &&
                   authState.user.hasRole('caregiver');
@@ -942,7 +1578,16 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                   authState is AuthAuthenticated &&
                   authState.user.accountType == 'client' &&
                   authState.user.hasRole('caregiver');
-              final isCaregiver = isOrganizationCaregiver || isClientCaregiver;
+              // Проверка на account_type doctor и caregiver
+              final isDoctorOrCaregiver =
+                  authState is AuthAuthenticated &&
+                  (authState.user.accountType == 'doctor' ||
+                      authState.user.accountType == 'caregiver');
+
+              final isCaregiver =
+                  isOrganizationCaregiver ||
+                  isClientCaregiver ||
+                  isDoctorOrCaregiver;
 
               // Длина контроллера зависит от роли: 4 для сиделок, 5 для остальных
               final tabLength = isCaregiver ? 4 : 5;
@@ -984,8 +1629,16 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                 authState is AuthAuthenticated &&
                                 authState.user.accountType == 'client' &&
                                 authState.user.hasRole('caregiver');
+                            // Проверка на account_type doctor и caregiver
+                            final isDoctorOrCaregiver =
+                                authState is AuthAuthenticated &&
+                                (authState.user.accountType == 'doctor' ||
+                                    authState.user.accountType == 'caregiver');
+
                             final isCaregiver =
-                                isOrganizationCaregiver || isClientCaregiver;
+                                isOrganizationCaregiver ||
+                                isClientCaregiver ||
+                                isDoctorOrCaregiver;
 
                             // Формируем список табов динамически
                             final tabs = [
@@ -1237,7 +1890,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                                       param.key,
                                                     ),
                                                   ),
-                                                  const SizedBox(height: 8),
+                                                  const SizedBox(height: 10),
                                                   Center(
                                                     child: Text(
                                                       _getDisplayTime(
@@ -1245,21 +1898,18 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                                                 .key] ??
                                                             param.times,
                                                       ),
-                                                      style: GoogleFonts.firaSans(
-                                                        fontSize:
-                                                            (_editedTimes[param
-                                                                        .key] ??
-                                                                    param.times)
-                                                                .isEmpty
-                                                            ? 10
-                                                            : 12,
-                                                        color: Colors.white
-                                                            .withOpacity(0.9),
-                                                        fontWeight:
-                                                            FontWeight.w800,
-                                                      ),
+                                                      style:
+                                                          GoogleFonts.firaSans(
+                                                            fontSize: 11,
+                                                            color: Colors.white,
+                                                            fontWeight:
+                                                                FontWeight.w800,
+                                                          ),
                                                       textAlign:
                                                           TextAlign.center,
+                                                      maxLines: 2,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
                                                     ),
                                                   ),
                                                   SizedBox(
@@ -1409,7 +2059,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                       _buildIndicatorValueCircle(
                                         _getLastValue(diary, param.key),
                                       ),
-                                      const SizedBox(height: 8),
+                                      const SizedBox(height: 10),
                                       Center(
                                         child: Text(
                                           _getDisplayTime(
@@ -1417,18 +2067,13 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                                 param.times,
                                           ),
                                           style: GoogleFonts.firaSans(
-                                            fontSize:
-                                                (_editedTimes[param.key] ??
-                                                        param.times)
-                                                    .isEmpty
-                                                ? 10
-                                                : 12,
-                                            color: Colors.white.withOpacity(
-                                              0.9,
-                                            ),
+                                            fontSize: 11,
+                                            color: Colors.white,
                                             fontWeight: FontWeight.w800,
                                           ),
                                           textAlign: TextAlign.center,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
                                       SizedBox(
@@ -1484,28 +2129,42 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                     Builder(
                       builder: (context) {
                         // Получаем all_indicators из settings
-                        final settings =
-                            diary?.settings as Map<String, dynamic>?;
-                        final allIndicators =
-                            settings?['all_indicators'] as List<dynamic>? ?? [];
+                        final settings = diary?.settings;
+                        final allIndicators = _normalizeIndicatorKeys(
+                          settings?['all_indicators'] ??
+                              settings?['allIndicators'],
+                        );
+
+                        // Получаем список закрепленных показателей
+                        final pinnedKeys =
+                            diary?.pinnedParameters.map((p) => p.key).toSet() ??
+                            {};
+
+                        // Исключаем закрепленные показатели из "Все показатели"
+                        final availableIndicators = allIndicators
+                            .where((e) => !pinnedKeys.contains(e))
+                            .toList();
 
                         // Фильтруем показатели по категориям
-                        final careIndicators = allIndicators
-                            .where(
-                              (e) => _careIndicatorKeys.contains(e.toString()),
-                            )
+                        final careIndicators = availableIndicators
+                            .where((e) => _careIndicatorKeys.contains(e))
                             .toList();
-                        final physicalIndicators = allIndicators
+                        final physicalIndicators = availableIndicators
+                            .where((e) => _physicalIndicatorKeys.contains(e))
+                            .toList();
+                        final excretionIndicators = availableIndicators
+                            .where((e) => _excretionIndicatorKeys.contains(e))
+                            .toList();
+                        final symptomIndicators = availableIndicators
+                            .where((e) => _symptomIndicatorKeys.contains(e))
+                            .toList();
+                        final customIndicators = availableIndicators
                             .where(
                               (e) =>
-                                  _physicalIndicatorKeys.contains(e.toString()),
-                            )
-                            .toList();
-                        final excretionIndicators = allIndicators
-                            .where(
-                              (e) => _excretionIndicatorKeys.contains(
-                                e.toString(),
-                              ),
+                                  !_careIndicatorKeys.contains(e) &&
+                                  !_physicalIndicatorKeys.contains(e) &&
+                                  !_excretionIndicatorKeys.contains(e) &&
+                                  !_symptomIndicatorKeys.contains(e),
                             )
                             .toList();
 
@@ -1550,6 +2209,34 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                               ),
                               context: context,
                             ),
+                            const SizedBox(height: 12),
+
+                            // Симптомы
+                            _buildCategoryCard(
+                              title: 'Симптомы',
+                              indicators: symptomIndicators,
+                              fallbackIndicators: _symptomIndicatorKeys,
+                              isExpanded: _isSymptomsExpanded,
+                              onToggle: () => setState(
+                                () =>
+                                    _isSymptomsExpanded = !_isSymptomsExpanded,
+                              ),
+                              context: context,
+                            ),
+                            if (customIndicators.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              _buildCategoryCard(
+                                title: 'Дополнительные показатели',
+                                indicators: customIndicators,
+                                fallbackIndicators: const [],
+                                isExpanded: _isCustomIndicatorsExpanded,
+                                onToggle: () => setState(
+                                  () => _isCustomIndicatorsExpanded =
+                                      !_isCustomIndicatorsExpanded,
+                                ),
+                                context: context,
+                              ),
+                            ],
                           ],
                         );
                       },
@@ -1560,11 +2247,18 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                     // Кнопки "Изменить показатели" и "Управление доступом" скрыты для сиделок
                     BlocBuilder<AuthBloc, AuthState>(
                       builder: (context, authState) {
-                        // Скрываем кнопки только для сиделок (caregiver), но показываем для врачей (doctor)
-                        if (authState is AuthAuthenticated &&
-                            authState.user.accountType == 'client' &&
-                            authState.user.hasRole('caregiver')) {
-                          return const SizedBox.shrink();
+                        // Скрываем кнопки для сиделок (caregiver) и врачей/сиделок от организации
+                        if (authState is AuthAuthenticated) {
+                          final type = authState.user.accountType;
+                          // Скрываем для doctor и caregiver (сотрудники организации)
+                          if (type == 'doctor' || type == 'caregiver') {
+                            return const SizedBox.shrink();
+                          }
+                          // Скрываем для клиентов с ролью caregiver
+                          if (type == 'client' &&
+                              authState.user.hasRole('caregiver')) {
+                            return const SizedBox.shrink();
+                          }
                         }
 
                         return Container(
@@ -1593,10 +2287,17 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                     ),
                                     elevation: 0,
                                   ),
-                                  onPressed: () {
-                                    if (diary != null &&
-                                        diary.entries.isNotEmpty) {
-                                      context.push(
+                                  onPressed: () async {
+                                    print(diary);
+                                    if (diary != null) {
+                                      // Получаем all_indicators из settings
+                                      final allIndicators =
+                                          (diary.settings?['all_indicators']
+                                                  as List<dynamic>?)
+                                              ?.map((e) => e.toString())
+                                              .toList() ??
+                                          [];
+                                      final result = await context.push(
                                         '/select-entry-to-edit',
                                         extra: {
                                           'diaryId': widget.diaryId,
@@ -1604,8 +2305,15 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                           'entries': diary.entries,
                                           'pinnedParameters':
                                               diary.pinnedParameters,
+                                          'allIndicators': allIndicators,
                                         },
                                       );
+                                      // Перезагружаем дневник если были изменения
+                                      if (result == true && mounted) {
+                                        context.read<DiaryBloc>().add(
+                                          LoadDiary(widget.diaryId),
+                                        );
+                                      }
                                     } else {
                                       ScaffoldMessenger.of(
                                         context,
@@ -2099,44 +2807,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
   }
 
   /// Получить человекочитаемое название показателя по ключу API
-  String _getIndicatorLabel(String key) {
-    const labels = {
-      'blood_pressure': 'Давление',
-      'temperature': 'Температура',
-      'pulse': 'Пульс',
-      'saturation': 'Сатурация',
-      'oxygen_saturation': 'Сатурация',
-      'respiratory_rate': 'Частота дыхания',
-      'diaper_change': 'Смена подгузников',
-      'walk': 'Прогулка',
-      'skin_moisturizing': 'Увлажнение кожи',
-      'medication': 'Приём лекарств',
-      'feeding': 'Кормление',
-      'meal': 'Прием пищи',
-      'fluid_intake': 'Выпито жидкости',
-      'urine_output': 'Выделено мочи',
-      'urine_color': 'Цвет мочи',
-      'urine': 'Выделение мочи',
-      'defecation': 'Дефекация',
-      'hygiene': 'Гигиена',
-      'cognitive_games': 'Когнитивные игры',
-      'vitamins': 'Приём витаминов',
-      'sleep': 'Сон',
-      'pain_level': 'Уровень боли',
-      'sugar_level': 'Уровень сахара',
-      'blood_sugar': 'Уровень сахара',
-      'nausea': 'Тошнота',
-      'vomiting': 'Рвота',
-      'dyspnea': 'Одышка',
-      'itching': 'Зуд',
-      'cough': 'Кашель',
-      'dry_mouth': 'Сухость во рту',
-      'hiccup': 'Икота',
-      'taste_disorder': 'Нарушение вкуса',
-      'care_procedure': 'Процедура ухода',
-    };
-    return labels[key] ?? key;
-  }
+  /// Делегирует вызов в утилиты для централизованного управления
+  String _getIndicatorLabel(String key) => diary_utils.getIndicatorLabel(key);
 
   /// Показать модальное окно для заполнения параметра
   void _showIndicatorModal(BuildContext context, String key, String label) {
@@ -2156,7 +2828,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
       'walk', // Прогулка - было/не было
     ];
 
-    final textParams = ['feeding', 'cognitive_games'];
+    final textParams = ['feeding', 'cognitive_games', 'meal'];
     final timeRangeParams = ['sleep'];
     final timeParams = ['diaper_change'];
     final measurementParams = [
@@ -2179,11 +2851,12 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         label,
         _getIndicatorDescription(key),
         _getIndicatorHint(key),
+        key,
       );
     } else if (timeRangeParams.contains(key)) {
-      _showTimeRangeModal(context, label, _getIndicatorDescription(key));
+      _showTimeRangeModal(context, label, _getIndicatorDescription(key), key);
     } else if (timeParams.contains(key)) {
-      _showTimeModal(context, label, _getIndicatorDescription(key));
+      _showTimeModal(context, label, _getIndicatorDescription(key), key);
     } else if (measurementParams.contains(key)) {
       _showMeasurementModal(
         context,
@@ -2207,1179 +2880,258 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     }
   }
 
-  String _getIndicatorDescription(String key) {
-    const descriptions = {
-      'skin_moisturizing': 'Отметьте, было ли увлажнение кожи.',
-      'hygiene': 'Отметьте, была ли проведена гигиена.',
-      'defecation': 'Отметьте, была ли дефекация.',
-      'nausea': 'Отметьте, была ли тошнота.',
-      'vomiting': 'Отметьте, была ли рвота.',
-      'dyspnea': 'Отметьте, была ли одышка.',
-      'itching': 'Отметьте, был ли зуд.',
-      'cough': 'Отметьте, был ли кашель.',
-      'dry_mouth': 'Отметьте, была ли сухость во рту.',
-      'hiccup': 'Отметьте, была ли икота.',
-      'taste_disorder': 'Отметьте, было ли нарушение вкуса.',
-      'feeding': 'Опишите, что ели и как прошёл приём пищи.',
-      'cognitive_games': 'Опишите, какие игры проводились.',
-      'walk': 'Укажите время начала и окончания прогулки.',
-      'sleep': 'Укажите время отхода ко сну и пробуждения.',
-      'diaper_change': 'Укажите время смены подгузника.',
-      'blood_pressure': 'Введите показатель артериального давления.',
-      'temperature': 'Введите температуру тела.',
-      'pulse': 'Введите частоту пульса.',
-      'saturation': 'Введите уровень сатурации.',
-      'respiratory_rate': 'Введите частоту дыхания.',
-      'pain_level': 'Оцените уровень боли от 0 до 10.',
-      'sugar_level': 'Введите уровень сахара в крови.',
-      'fluid_intake': 'Введите количество выпитой жидкости.',
-      'urine_output': 'Введите количество выделенной мочи.',
-      'medication': 'Выберите лекарства для приёма.',
-      'vitamins': 'Выберите витамины для приёма.',
-      'urine_color': 'Выберите цвет мочи.',
-    };
-    return descriptions[key] ?? '';
-  }
+  /// Получить описание показателя для модального окна
+  /// Делегирует вызов в утилиты для централизованного управления
+  String _getIndicatorDescription(String key) =>
+      diary_utils.getIndicatorDescription(key);
 
-  String _getIndicatorHint(String key) {
-    const hints = {
-      'feeding': 'Например: завтрак — овсянка, чай',
-      'cognitive_games': 'Например: шахматы, чтение книги',
-    };
-    return hints[key] ?? '';
-  }
+  /// Получить подсказку для текстового ввода
+  /// Делегирует вызов в утилиты для централизованного управления
+  String _getIndicatorHint(String key) => diary_utils.getIndicatorHint(key);
 
   /// Модальное окно с выбором Было/Не было
+  /// Использует готовый компонент из modals и добавляет бизнес-логику сохранения
   void _showBooleanModal(
     BuildContext context,
     String title,
     String description,
-    String key, // Added key
-  ) {
-    bool? selectedValue;
-
-    showDialog(
+    String key,
+  ) async {
+    final selectedValue = await modals.showBooleanModal(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.5),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) => Dialog(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  title,
-                  style: GoogleFonts.firaSans(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.grey.shade900,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  description,
-                  style: GoogleFonts.firaSans(
-                    fontSize: 14,
-                    color: Colors.grey.shade600,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Время заполнения фиксируется автоматически',
-                  style: GoogleFonts.firaSans(
-                    fontSize: 12,
-                    color: Colors.grey.shade400,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => setModalState(() => selectedValue = true),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          decoration: BoxDecoration(
-                            color: selectedValue == true
-                                ? AppConfig.primaryColor.withOpacity(0.1)
-                                : Colors.grey.shade50,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: selectedValue == true
-                                  ? AppConfig.primaryColor
-                                  : Colors.transparent,
-                              width: 2,
-                            ),
-                          ),
-                          child: Center(
-                            child: Text(
-                              'Было',
-                              style: GoogleFonts.firaSans(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: selectedValue == true
-                                    ? AppConfig.primaryColor
-                                    : Colors.grey.shade700,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => setModalState(() => selectedValue = false),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          decoration: BoxDecoration(
-                            color: selectedValue == false
-                                ? AppConfig.primaryColor.withOpacity(0.1)
-                                : Colors.grey.shade50,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: selectedValue == false
-                                  ? AppConfig.primaryColor
-                                  : Colors.transparent,
-                              width: 2,
-                            ),
-                          ),
-                          child: Center(
-                            child: Text(
-                              'Не было',
-                              style: GoogleFonts.firaSans(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: selectedValue == false
-                                    ? AppConfig.primaryColor
-                                    : Colors.grey.shade700,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          side: BorderSide(color: Colors.grey.shade300),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                        ),
-                        child: Text(
-                          'Отмена',
-                          style: GoogleFonts.firaSans(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey.shade700,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: selectedValue != null
-                            ? () {
-                                print('--- Save Boolean Clicked ---');
-                                print('Key: $key');
-                                print('Value: $selectedValue');
-
-                                context.read<DiaryBloc>().add(
-                                  CreateMeasurement(
-                                    patientId: widget.patientId,
-                                    type: _getParameterType(key),
-                                    key: key,
-                                    value: selectedValue,
-                                    recordedAt: DateTime.now(),
-                                  ),
-                                );
-
-                                Navigator.pop(ctx);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      '$title: ${selectedValue! ? "Было" : "Не было"}',
-                                    ),
-                                    backgroundColor: AppConfig.primaryColor,
-                                  ),
-                                );
-                              }
-                            : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppConfig.primaryColor,
-                          disabledBackgroundColor: Colors.grey.shade300,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                        ),
-                        child: Text(
-                          'Сохранить',
-                          style: GoogleFonts.firaSans(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      title: title,
+      description: description,
     );
+
+    if (selectedValue != null && mounted) {
+      log.d('--- Save Boolean ---');
+      log.d('Key: $key, Value: $selectedValue');
+
+      context.read<DiaryBloc>().add(
+        CreateMeasurement(
+          patientId: widget.patientId,
+          type: _getParameterType(key),
+          key: key,
+          value: {'value': selectedValue},
+          recordedAt: DateTime.now(),
+        ),
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$title: ${selectedValue ? "Было" : "Не было"}'),
+          backgroundColor: AppConfig.primaryColor,
+        ),
+      );
+    }
   }
 
   /// Модальное окно с текстовым вводом
+  /// Использует готовый компонент из modals
   void _showTextModal(
     BuildContext context,
     String title,
     String description,
     String hint,
-  ) {
-    final controller = TextEditingController();
-
-    showDialog(
+    String key,
+  ) async {
+    final result = await modals.showTextInputModal(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.5),
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                title,
-                style: GoogleFonts.firaSans(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.grey.shade900,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                description,
-                style: GoogleFonts.firaSans(
-                  fontSize: 14,
-                  color: Colors.grey.shade600,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Время заполнения фиксируется автоматически',
-                style: GoogleFonts.firaSans(
-                  fontSize: 12,
-                  color: Colors.grey.shade400,
-                ),
-              ),
-              const SizedBox(height: 24),
-              TextField(
-                controller: controller,
-                decoration: InputDecoration(
-                  hintText: hint,
-                  hintStyle: GoogleFonts.firaSans(color: Colors.grey.shade400),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide(color: Colors.grey.shade300),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide(color: Colors.grey.shade300),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide(color: AppConfig.primaryColor),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        side: BorderSide(color: Colors.grey.shade300),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                      ),
-                      child: Text(
-                        'Отмена',
-                        style: GoogleFonts.firaSans(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade700,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        if (controller.text.isNotEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('$title сохранено'),
-                              backgroundColor: AppConfig.primaryColor,
-                            ),
-                          );
-                        }
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppConfig.primaryColor,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                      ),
-                      child: Text(
-                        'Сохранить',
-                        style: GoogleFonts.firaSans(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
+      title: title,
+      description: description,
+      hint: hint,
     );
+
+    if (result != null && result.isNotEmpty && mounted) {
+      context.read<DiaryBloc>().add(
+        CreateMeasurement(
+          patientId: widget.patientId,
+          type: _getParameterType(key),
+          key: key,
+          value: {'value': result},
+          recordedAt: DateTime.now(),
+        ),
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$title сохранено'),
+          backgroundColor: AppConfig.primaryColor,
+        ),
+      );
+    }
   }
 
   /// Модальное окно с выбором времени
-  void _showTimeModal(BuildContext context, String title, String description) {
-    TimeOfDay? selectedTime;
-
-    showDialog(
+  Future<void> _showTimeModal(
+    BuildContext context,
+    String title,
+    String description,
+    String key,
+  ) async {
+    final selectedTime = await showTimePickerModal(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.5),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) => Dialog(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  title,
-                  style: GoogleFonts.firaSans(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.grey.shade900,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  description,
-                  style: GoogleFonts.firaSans(
-                    fontSize: 14,
-                    color: Colors.grey.shade600,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 24),
-                GestureDetector(
-                  onTap: () async {
-                    final time = await showTimePicker(
-                      context: ctx,
-                      initialTime: TimeOfDay.now(),
-                    );
-                    if (time != null) {
-                      setModalState(() => selectedTime = time);
-                    }
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 14,
-                      horizontal: 24,
-                    ),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey.shade300),
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.access_time, color: AppConfig.primaryColor),
-                        const SizedBox(width: 8),
-                        Text(
-                          selectedTime != null
-                              ? selectedTime!.format(ctx)
-                              : 'Выбрать время',
-                          style: GoogleFonts.firaSans(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: selectedTime != null
-                                ? Colors.grey.shade900
-                                : Colors.grey.shade500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          side: BorderSide(color: Colors.grey.shade300),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                        ),
-                        child: Text(
-                          'Отмена',
-                          style: GoogleFonts.firaSans(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey.shade700,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: selectedTime != null
-                            ? () {
-                                Navigator.pop(ctx);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      '$title: ${selectedTime!.format(ctx)}',
-                                    ),
-                                    backgroundColor: AppConfig.primaryColor,
-                                  ),
-                                );
-                              }
-                            : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppConfig.primaryColor,
-                          disabledBackgroundColor: Colors.grey.shade300,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                        ),
-                        child: Text(
-                          'Сохранить',
-                          style: GoogleFonts.firaSans(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      title: title,
+      description: description,
+      initialTime: TimeOfDay.now(),
     );
+
+    if (selectedTime != null) {
+      // Сохраняем запись в дневник
+      if (context.mounted) {
+        context.read<DiaryBloc>().add(
+          CreateMeasurement(
+            patientId: widget.patientId,
+            key: key,
+            value: {'value': selectedTime.format(context)},
+            recordedAt: DateTime.now(),
+            type: _getParameterType(key),
+          ),
+        );
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$title: ${selectedTime.format(context)}'),
+            backgroundColor: AppConfig.primaryColor,
+          ),
+        );
+      }
+    }
   }
 
   /// Модальное окно с диапазоном времени
+  /// Использует готовый компонент из modals и добавляет бизнес-логику сохранения
   void _showTimeRangeModal(
     BuildContext context,
     String title,
     String description,
-  ) {
-    TimeOfDay? startTime;
-    TimeOfDay? endTime;
-
-    showDialog(
+    String key,
+  ) async {
+    final result = await modals.showTimeRangeModal(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.5),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) => Dialog(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  title,
-                  style: GoogleFonts.firaSans(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.grey.shade900,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  description,
-                  style: GoogleFonts.firaSans(
-                    fontSize: 14,
-                    color: Colors.grey.shade600,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () async {
-                          final time = await showTimePicker(
-                            context: ctx,
-                            initialTime: TimeOfDay.now(),
-                          );
-                          if (time != null) {
-                            setModalState(() => startTime = time);
-                          }
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Column(
-                            children: [
-                              Text(
-                                'Начало',
-                                style: GoogleFonts.firaSans(
-                                  fontSize: 12,
-                                  color: Colors.grey.shade500,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                startTime != null
-                                    ? startTime!.format(ctx)
-                                    : '--:--',
-                                style: GoogleFonts.firaSans(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                  color: startTime != null
-                                      ? Colors.grey.shade900
-                                      : Colors.grey.shade400,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Icon(Icons.arrow_forward, color: Colors.grey.shade400),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () async {
-                          final time = await showTimePicker(
-                            context: ctx,
-                            initialTime: TimeOfDay.now(),
-                          );
-                          if (time != null) {
-                            setModalState(() => endTime = time);
-                          }
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Column(
-                            children: [
-                              Text(
-                                'Окончание',
-                                style: GoogleFonts.firaSans(
-                                  fontSize: 12,
-                                  color: Colors.grey.shade500,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                endTime != null
-                                    ? endTime!.format(ctx)
-                                    : '--:--',
-                                style: GoogleFonts.firaSans(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                  color: endTime != null
-                                      ? Colors.grey.shade900
-                                      : Colors.grey.shade400,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          side: BorderSide(color: Colors.grey.shade300),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                        ),
-                        child: Text(
-                          'Отмена',
-                          style: GoogleFonts.firaSans(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey.shade700,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: startTime != null && endTime != null
-                            ? () {
-                                Navigator.pop(ctx);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      '$title: ${startTime!.format(ctx)} - ${endTime!.format(ctx)}',
-                                    ),
-                                    backgroundColor: AppConfig.primaryColor,
-                                  ),
-                                );
-                              }
-                            : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppConfig.primaryColor,
-                          disabledBackgroundColor: Colors.grey.shade300,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                        ),
-                        child: Text(
-                          'Сохранить',
-                          style: GoogleFonts.firaSans(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      title: title,
+      description: description,
     );
+
+    if (result != null && mounted) {
+      // Сохраняем запись в дневник
+      context.read<DiaryBloc>().add(
+        CreateMeasurement(
+          patientId: widget.patientId,
+          key: key,
+          value: {
+            'start': result.startTime.format(context),
+            'end': result.endTime.format(context),
+          },
+          recordedAt: DateTime.now(),
+          type: _getParameterType(key),
+        ),
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$title: ${result.formattedRange}'),
+          backgroundColor: AppConfig.primaryColor,
+        ),
+      );
+    }
   }
 
   /// Модальное окно с вводом измерения
-  /// Модальное окно с вводом измерения
+  /// Использует готовый компонент из modals и добавляет бизнес-логику сохранения
   void _showMeasurementModal(
     BuildContext context,
     String title,
     String description,
     String unit,
-    String key, // Added key parameter
-  ) {
-    final controller = TextEditingController();
-
-    showDialog(
+    String key,
+  ) async {
+    final result = await modals.showMeasurementModal(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.5),
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                title,
-                style: GoogleFonts.firaSans(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.grey.shade900,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                description,
-                style: GoogleFonts.firaSans(
-                  fontSize: 14,
-                  color: Colors.grey.shade600,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Время заполнения фиксируется автоматически',
-                style: GoogleFonts.firaSans(
-                  fontSize: 12,
-                  color: Colors.grey.shade400,
-                ),
-              ),
-              const SizedBox(height: 24),
-              TextField(
-                controller: controller,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  suffixText: unit,
-                  suffixStyle: GoogleFonts.firaSans(
-                    color: Colors.grey.shade600,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide(color: Colors.grey.shade300),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide(color: Colors.grey.shade300),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide(color: AppConfig.primaryColor),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        side: BorderSide(color: Colors.grey.shade300),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                      ),
-                      child: Text(
-                        'Отмена',
-                        style: GoogleFonts.firaSans(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade700,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () {
-                        print('--- Save Button Clicked ---');
-                        print('Input text: "${controller.text}"');
-
-                        if (controller.text.isNotEmpty) {
-                          dynamic value = controller.text;
-
-                          // Parse blood pressure if needed
-                          if (key == 'blood_pressure' && value.contains('/')) {
-                            final parts = value.split('/');
-                            if (parts.length == 2) {
-                              value = {
-                                'systolic': int.tryParse(parts[0].trim()) ?? 0,
-                                'diastolic': int.tryParse(parts[1].trim()) ?? 0,
-                              };
-                            }
-                          }
-
-                          print('Key: $key');
-                          print('Processed Value: $value');
-
-                          context.read<DiaryBloc>().add(
-                            CreateMeasurement(
-                              patientId: widget.patientId,
-                              type: _getParameterType(key),
-                              key: key,
-                              value: value,
-                              recordedAt: DateTime.now(),
-                            ),
-                          );
-
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('$title: ${controller.text} $unit'),
-                              backgroundColor: AppConfig.primaryColor,
-                            ),
-                          );
-                        }
-                        Navigator.pop(ctx);
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppConfig.primaryColor,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                      ),
-                      child: Text(
-                        'Сохранить',
-                        style: GoogleFonts.firaSans(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
+      title: title,
+      description: description,
+      unit: unit,
+      key: key,
     );
+
+    if (result != null && mounted) {
+      log.d('--- Save Measurement ---');
+      log.d('Key: $key, Value: ${result.value}');
+
+      context.read<DiaryBloc>().add(
+        CreateMeasurement(
+          patientId: widget.patientId,
+          type: _getParameterType(key),
+          key: key,
+          value: {'value': result.value},
+          recordedAt: DateTime.now(),
+        ),
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$title: ${result.displayText}'),
+          backgroundColor: AppConfig.primaryColor,
+        ),
+      );
+    }
   }
 
   /// Модальное окно для лекарств/витаминов
+  /// Использует готовый компонент из modals и добавляет бизнес-логику сохранения
   void _showMedicationModal(
     BuildContext context,
     String title,
     String description,
-    String key, // Added key
-  ) {
-    final controller = TextEditingController();
-
-    showDialog(
+    String key,
+  ) async {
+    final result = await modals.showTextInputModal(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.5),
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                title,
-                style: GoogleFonts.firaSans(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.grey.shade900,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                description,
-                style: GoogleFonts.firaSans(
-                  fontSize: 14,
-                  color: Colors.grey.shade600,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 24),
-              TextField(
-                controller: controller,
-                decoration: InputDecoration(
-                  hintText: 'Введите название',
-                  hintStyle: GoogleFonts.firaSans(color: Colors.grey.shade400),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide(color: Colors.grey.shade300),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide(color: Colors.grey.shade300),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide(color: AppConfig.primaryColor),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        side: BorderSide(color: Colors.grey.shade300),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                      ),
-                      child: Text(
-                        'Отмена',
-                        style: GoogleFonts.firaSans(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade700,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () {
-                        if (controller.text.isNotEmpty) {
-                          print('--- Save Medication/Vitamins Clicked ---');
-                          print('Key: $key');
-                          print('Value: ${controller.text}');
-
-                          context.read<DiaryBloc>().add(
-                            CreateMeasurement(
-                              patientId: widget.patientId,
-                              type: _getParameterType(key),
-                              key: key,
-                              value: controller.text,
-                              recordedAt: DateTime.now(),
-                            ),
-                          );
-
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('$title: ${controller.text}'),
-                              backgroundColor: AppConfig.primaryColor,
-                            ),
-                          );
-                        }
-                        Navigator.pop(ctx);
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppConfig.primaryColor,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                      ),
-                      child: Text(
-                        'Сохранить',
-                        style: GoogleFonts.firaSans(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
+      title: title,
+      description: description,
+      hint: 'Введите название',
     );
+
+    if (result != null && result.isNotEmpty && mounted) {
+      print('--- Save Medication/Vitamins Clicked ---');
+      print('Key: $key');
+      print('Value: $result');
+
+      context.read<DiaryBloc>().add(
+        CreateMeasurement(
+          patientId: widget.patientId,
+          type: _getParameterType(key),
+          key: key,
+          value: {'value': result},
+          recordedAt: DateTime.now(),
+        ),
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$title: $result'),
+          backgroundColor: AppConfig.primaryColor,
+        ),
+      );
+    }
   }
 
   /// Модальное окно для выбора цвета мочи
-  void _showUrineColorModal(BuildContext context, String title) {
-    String? selectedColor;
-    final colors = [
-      'Светло-жёлтый',
-      'Жёлтый',
-      'Тёмно-жёлтый',
-      'Оранжевый',
-      'Красноватый',
-      'Коричневый',
-    ];
-
-    showDialog(
+  /// Использует готовый компонент из modals и добавляет бизнес-логику сохранения
+  void _showUrineColorModal(BuildContext context, String title) async {
+    final selectedColor = await modals.showUrineColorModal(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.5),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) => Dialog(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  title,
-                  style: GoogleFonts.firaSans(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.grey.shade900,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Выберите цвет мочи',
-                  style: GoogleFonts.firaSans(
-                    fontSize: 14,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: colors.map((color) {
-                    final isSelected = selectedColor == color;
-                    return GestureDetector(
-                      onTap: () => setModalState(() => selectedColor = color),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? AppConfig.primaryColor.withOpacity(0.1)
-                              : Colors.white,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: isSelected
-                                ? AppConfig.primaryColor
-                                : Colors.grey.shade300,
-                          ),
-                        ),
-                        child: Text(
-                          color,
-                          style: GoogleFonts.firaSans(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: isSelected
-                                ? AppConfig.primaryColor
-                                : Colors.grey.shade700,
-                          ),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          side: BorderSide(color: Colors.grey.shade300),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                        ),
-                        child: Text(
-                          'Отмена',
-                          style: GoogleFonts.firaSans(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey.shade700,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: selectedColor != null
-                            ? () {
-                                Navigator.pop(ctx);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('$title: $selectedColor'),
-                                    backgroundColor: AppConfig.primaryColor,
-                                  ),
-                                );
-                              }
-                            : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppConfig.primaryColor,
-                          disabledBackgroundColor: Colors.grey.shade300,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                        ),
-                        child: Text(
-                          'Сохранить',
-                          style: GoogleFonts.firaSans(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      title: title,
     );
+
+    if (selectedColor != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$title: $selectedColor'),
+          backgroundColor: AppConfig.primaryColor,
+        ),
+      );
+    }
   }
 
   Widget _buildExpandedIndicatorCard(
@@ -3419,7 +3171,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -3448,6 +3200,21 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                 ),
                 const SizedBox(height: 8),
                 _buildIndicatorValueCircle(_getLastValue(diary, param.key)),
+                const SizedBox(height: 10),
+                // Время заполнения
+                Center(
+                  child: Text(
+                    _getDisplayTime(_editedTimes[param.key] ?? param.times),
+                    style: GoogleFonts.firaSans(
+                      fontSize: 11,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
                 const SizedBox(height: 8),
                 // Save Button
                 SizedBox(
@@ -3502,17 +3269,51 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                       }
 
                       // 2. Create Measurement
-                      if (measurementController.text.isNotEmpty) {
-                        dynamic value = measurementController.text;
-                        if (param.key == 'blood_pressure' &&
-                            value.contains('/')) {
-                          final parts = value.split('/');
-                          if (parts.length == 2) {
-                            value = {
-                              'systolic': int.tryParse(parts[0].trim()) ?? 0,
-                              'diastolic': int.tryParse(parts[1].trim()) ?? 0,
-                            };
+                      // Для давления проверяем оба поля
+                      final hasMeasurementInput = param.key == 'blood_pressure'
+                          ? (measurementController.text.isNotEmpty &&
+                                (_diastolicControllers[index]
+                                        ?.text
+                                        .isNotEmpty ??
+                                    false))
+                          : measurementController.text.isNotEmpty;
+
+                      if (hasMeasurementInput) {
+                        dynamic value;
+
+                        // Обработка давления - используем оба контроллера
+                        if (param.key == 'blood_pressure') {
+                          final systolic = measurementController.text.trim();
+                          final diastolic =
+                              _diastolicControllers[index]?.text.trim() ?? '';
+                          value = {
+                            'systolic': int.tryParse(systolic) ?? 0,
+                            'diastolic': int.tryParse(diastolic) ?? 0,
+                          };
+                        }
+                        // Обработка булевых параметров
+                        else if (_booleanParams.contains(param.key)) {
+                          value = measurementController.text == 'true';
+                        }
+                        // Обработка числовых параметров
+                        else if (_measurementParams.contains(param.key)) {
+                          final numValue = num.tryParse(
+                            measurementController.text.toString().replaceAll(
+                              ',',
+                              '.',
+                            ),
+                          );
+                          if (numValue != null) {
+                            value = numValue;
+                          } else {
+                            value = measurementController.text;
                           }
+                        }
+                        // Обработка текстовых параметров - оборачиваем в Map
+                        else if (_textParams.contains(param.key)) {
+                          value = {'value': measurementController.text};
+                        } else {
+                          value = measurementController.text;
                         }
 
                         log.d('--- Create Measurement Log ---');
@@ -3526,13 +3327,17 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                             patientId: widget.patientId,
                             type: _getParameterType(param.key),
                             key: param.key,
-                            value: value,
+                            value: {'value': value},
                             notes:
                                 null, // User can add notes logic later if needed
                             recordedAt: DateTime.now(),
                           ),
                         );
                         measurementController.clear();
+                        // Очищаем контроллер диастолического давления
+                        if (param.key == 'blood_pressure') {
+                          _diastolicControllers[index]?.clear();
+                        }
                         hasChanges = true;
                       }
 
@@ -3561,273 +3366,214 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
           // Right section: Input fields
           Expanded(
             flex: 4,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Measurement Input
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 12,
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Measurement Input - динамический в зависимости от типа параметра
+                  _buildParameterInputWidget(
+                    param: param,
+                    measurementController: measurementController,
+                    blocContext: blocContext,
+                    index: index,
                   ),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        const Color(0xFF7DCAD6),
-                        const Color(0xFF55ACBF),
-                      ],
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
+                  const SizedBox(height: 10), // Уменьшен отступ
+                  // Times Logic
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
                     ),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Заполните:',
-                        style: GoogleFonts.firaSans(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.white,
-                        ),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          const Color(0xFF7DCAD6),
+                          const Color(0xFF55ACBF),
+                        ],
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
                       ),
-                      const SizedBox(height: 4),
-                      SizedBox(
-                        height: 44,
-                        child: TextFormField(
-                          controller: measurementController,
-                          style: GoogleFonts.firaSans(
-                            fontSize: 14,
-                            color: Colors.grey.shade900,
-                            height: 1.2,
-                          ),
-                          textAlignVertical: TextAlignVertical.center,
-                          decoration: InputDecoration(
-                            hintText: 'Внесите замер',
-                            hintStyle: GoogleFonts.firaSans(
-                              fontSize: 14,
-                              color: Colors.grey.shade400,
-                              height: 1.2,
-                            ),
-                            filled: true,
-                            fillColor: Colors.white,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                            ), // Vertical padding ignored due to fixed height + center alignment
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12), // Увеличен отступ
-                // Times Logic
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        const Color(0xFF7DCAD6),
-                        const Color(0xFF55ACBF),
-                      ],
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      GestureDetector(
-                        onTap: () async {
-                          final TimeOfDay? pickedTime = await showTimePicker(
-                            context: context,
-                            initialTime: TimeOfDay.now(),
-                            builder: (context, child) {
-                              return Theme(
-                                data: Theme.of(context).copyWith(
-                                  colorScheme: ColorScheme.light(
-                                    primary: AppConfig.primaryColor,
-                                    onPrimary: Colors.white,
-                                    surface: Colors.white,
-                                    onSurface: Colors.black,
-                                  ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onTap: () async {
+                            final TimeOfDay? pickedTime =
+                                await showTimePickerModal(
+                                  context: context,
+                                  title: 'Выберите время',
+                                  description: 'Время заполнения',
+                                  initialTime: TimeOfDay.now(),
+                                );
+                            if (pickedTime != null) {
+                              final timeString =
+                                  '${pickedTime.hour.toString().padLeft(2, '0')}:${pickedTime.minute.toString().padLeft(2, '0')}';
+                              setState(() {
+                                final newTimes = List<String>.from(times);
+                                if (!newTimes.contains(timeString)) {
+                                  newTimes.add(timeString);
+                                  newTimes.sort();
+                                  _editedTimes[param.key] = newTimes;
+                                }
+                              });
+                            }
+                          },
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Время заполнения:',
+                                style: GoogleFonts.firaSans(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
                                 ),
-                                child: child!,
-                              );
-                            },
-                          );
-                          if (pickedTime != null) {
-                            final timeString =
-                                '${pickedTime.hour.toString().padLeft(2, '0')}:${pickedTime.minute.toString().padLeft(2, '0')}';
-                            setState(() {
-                              final newTimes = List<String>.from(times);
-                              if (!newTimes.contains(timeString)) {
-                                newTimes.add(timeString);
-                                newTimes.sort();
-                                _editedTimes[param.key] = newTimes;
-                              }
-                            });
-                          }
-                        },
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'Время заполнения:',
-                              style: GoogleFonts.firaSans(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800,
-                                color: Colors.white,
+                              ),
+                              Text(
+                                '${times.length} раз(а)',
+                                style: GoogleFonts.firaSans(
+                                  fontSize: 11,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        // List of times
+                        if (times.isNotEmpty)
+                          SizedBox(
+                            height: 24,
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: times.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(width: 4),
+                              itemBuilder: (context, i) => Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                ),
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.25),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Text(
+                                      times[i],
+                                      style: GoogleFonts.firaSans(
+                                        fontSize: 11,
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    GestureDetector(
+                                      onTap: () {
+                                        setState(() {
+                                          final newTimes = List<String>.from(
+                                            times,
+                                          );
+                                          newTimes.removeAt(i);
+                                          _editedTimes[param.key] = newTimes;
+                                        });
+                                      },
+                                      child: const Icon(
+                                        Icons.close,
+                                        size: 12,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                            Text(
-                              '${times.length} раз(а)',
-                              style: GoogleFonts.firaSans(
-                                fontSize: 11,
-                                color: Colors.white,
+                          ),
+                        if (times.isNotEmpty) const SizedBox(height: 4),
+
+                        Row(
+                          children: [
+                            Flexible(
+                              child: SizedBox(
+                                height: 38,
+                                child: TextFormField(
+                                  controller: timeController,
+                                  inputFormatters: [timeFormatter],
+                                  style: GoogleFonts.firaSans(
+                                    fontSize: 14,
+                                    color: Colors.grey.shade900,
+                                    height: 1.2,
+                                  ),
+                                  textAlignVertical: TextAlignVertical.center,
+                                  decoration: InputDecoration(
+                                    hintText: '-:-',
+                                    hintStyle: GoogleFonts.firaSans(
+                                      fontSize: 14,
+                                      color: Colors.grey.shade400,
+                                      height: 1.2,
+                                    ),
+                                    filled: true,
+                                    fillColor: Colors.white,
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                    ),
+                                    suffixIcon: const Icon(
+                                      Icons.access_time,
+                                      size: 18,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                  keyboardType: TextInputType.number,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            InkWell(
+                              onTap: () {
+                                if (timeController.text.length == 5) {
+                                  setState(() {
+                                    final newTimes = List<String>.from(times);
+                                    if (!newTimes.contains(
+                                      timeController.text,
+                                    )) {
+                                      newTimes.add(timeController.text);
+                                      newTimes.sort();
+                                      _editedTimes[param.key] = newTimes;
+                                    }
+                                  });
+                                  timeController.clear();
+                                }
+                              },
+                              child: Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF317799),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.add,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
                               ),
                             ),
                           ],
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      // List of times
-                      if (times.isNotEmpty)
-                        SizedBox(
-                          height: 24,
-                          child: ListView.separated(
-                            scrollDirection: Axis.horizontal,
-                            itemCount: times.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(width: 4),
-                            itemBuilder: (context, i) => Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                              ),
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.25),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Row(
-                                children: [
-                                  Text(
-                                    times[i],
-                                    style: GoogleFonts.firaSans(
-                                      fontSize: 11,
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  GestureDetector(
-                                    onTap: () {
-                                      setState(() {
-                                        final newTimes = List<String>.from(
-                                          times,
-                                        );
-                                        newTimes.removeAt(i);
-                                        _editedTimes[param.key] = newTimes;
-                                      });
-                                    },
-                                    child: const Icon(
-                                      Icons.close,
-                                      size: 12,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      if (times.isNotEmpty) const SizedBox(height: 4),
-
-                      Row(
-                        children: [
-                          Flexible(
-                            child: SizedBox(
-                              height: 44,
-                              child: TextFormField(
-                                controller: timeController,
-                                inputFormatters: [timeFormatter],
-                                style: GoogleFonts.firaSans(
-                                  fontSize: 14,
-                                  color: Colors.grey.shade900,
-                                  height: 1.2,
-                                ),
-                                textAlignVertical: TextAlignVertical.center,
-                                decoration: InputDecoration(
-                                  hintText: '-:-',
-                                  hintStyle: GoogleFonts.firaSans(
-                                    fontSize: 14,
-                                    color: Colors.grey.shade400,
-                                    height: 1.2,
-                                  ),
-                                  filled: true,
-                                  fillColor: Colors.white,
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                    borderSide: BorderSide.none,
-                                  ),
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                  ),
-                                  suffixIcon: const Icon(
-                                    Icons.access_time,
-                                    size: 18,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                                keyboardType: TextInputType.number,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          InkWell(
-                            onTap: () {
-                              if (timeController.text.length == 5) {
-                                setState(() {
-                                  final newTimes = List<String>.from(times);
-                                  if (!newTimes.contains(timeController.text)) {
-                                    newTimes.add(timeController.text);
-                                    newTimes.sort();
-                                    _editedTimes[param.key] = newTimes;
-                                  }
-                                });
-                                timeController.clear();
-                              }
-                            },
-                            child: Container(
-                              width: 32,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF317799),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Icon(
-                                Icons.add,
-                                color: Colors.white,
-                                size: 18,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
@@ -4239,15 +3985,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
   Widget _buildHistoryTab(BuildContext context, Diary? diary) {
     if (diary == null) return const SizedBox();
 
-    // Логируем все записи истории, полученные от API, красиво форматированным JSON
-    try {
-      final entriesJson = diary.entries.map((e) => e.toJson()).toList();
-      final pretty = const JsonEncoder.withIndent('  ').convert(entriesJson);
-      log.i('=== Diary history (API) ===\n$pretty');
-    } catch (e) {
-      log.e('Failed to pretty-print diary entries: $e');
-    }
-
     return SafeArea(
       child: RefreshIndicator(
         onRefresh: () async {
@@ -4427,13 +4164,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                           ),
                           // Записи
                           ..._getMedicationEntries(diary).map((entry) {
-                            String displayValue;
-                            if (entry.value is Map &&
-                                entry.value.containsKey('value')) {
-                              displayValue = entry.value['value'].toString();
-                            } else {
-                              displayValue = entry.value.toString();
-                            }
+                            // Используем централизованный метод форматирования
+                            final displayValue = _formatEntryValue(entry);
 
                             return Container(
                               margin: const EdgeInsets.only(bottom: 8),
@@ -4466,7 +4198,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                   Text(
                                     DateFormat(
                                       'HH:mm',
-                                    ).format(entry.recordedAt),
+                                    ).format(entry.recordedAt.toLocal()),
                                     style: GoogleFonts.firaSans(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w500,
@@ -4735,19 +4467,20 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
   }
 
   List<DiaryEntry> _getOtherEntries(Diary diary) {
-    return _getFormattedEntries(diary).where((entry) {
-      return entry.parameterKey != 'medication' &&
-          entry.parameterKey != 'vitamins';
-    }).toList();
+    return _getFormattedEntries(diary);
   }
 
   List<DiaryEntry> _getFormattedEntries(Diary diary) {
-    return diary.entries.where((entry) {
+    final filtered = diary.entries.where((entry) {
       final localRecordedAt = entry.recordedAt.toLocal();
-      return localRecordedAt.year == _selectedDate.year &&
+      final matches =
+          localRecordedAt.year == _selectedDate.year &&
           localRecordedAt.month == _selectedDate.month &&
           localRecordedAt.day == _selectedDate.day;
+      return matches;
     }).toList()..sort((a, b) => b.recordedAt.compareTo(a.recordedAt));
+
+    return filtered;
   }
 
   Widget _buildHistoryEntriesList(List<DiaryEntry> entries) {
@@ -4882,54 +4615,213 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
 
   /// Форматирует значение записи для отображения в истории
   String _formatEntryValue(DiaryEntry entry) {
-    final value = entry.value;
+    var value = entry.value;
 
-    // Обработка булевых значений
-    if (value is bool) {
+    // Показатели времени не должны преобразовываться в "Было"/"Не было"
+    const timeParams = [
+      'diaper_change',
+      'bath',
+      'nail_care',
+      'hair_care',
+      'shaving',
+    ];
+
+    // Обработка булевых значений (кроме показателей времени)
+    if (value is bool && !timeParams.contains(entry.parameterKey)) {
       return value ? 'Было' : 'Не было';
     }
 
-    // Обработка числовых булевых представлений (1/0)
-    if (value is num) {
+    // Обработка числовых булевых представлений (1/0) - кроме показателей времени
+    if (value is num && !timeParams.contains(entry.parameterKey)) {
       if (value == 1) return 'Было';
       if (value == 0) return 'Не было';
     }
 
-    // Обработка Map (например {value: false} или blood_pressure)
+    // ... (код для blood_pressure пропускаем, он выше затронут через search/replace сложнее будет попасть, лучше точечно)
+    // ... вернемся к Value processing после blood_pressure
+
+    // Рекурсивное извлечение вложенного значения из цепочки {value: {value: {value: ...}}}
+    while (value is Map && value.containsKey('value')) {
+      value = value['value'];
+    }
+
+    // После извлечения проверяем финальный тип (кроме показателей времени)
+    if (value is bool && !timeParams.contains(entry.parameterKey)) {
+      return value ? 'Было' : 'Не было';
+    }
+
+    if (value is num && !timeParams.contains(entry.parameterKey)) {
+      if (value == 1) return 'Было';
+      if (value == 0) return 'Не было';
+      final displayValue = value.toString();
+      final unit = _getUnitForParameter(entry.parameterKey);
+      // Проверяем, не содержит ли значение уже единицу измерения
+      if (unit.isNotEmpty && !displayValue.contains(unit)) {
+        return '$displayValue $unit';
+      }
+      return displayValue;
+    }
+
+    if (value is String) {
+      // Для временных параметров добавляем "Было в"
+      if (timeParams.contains(entry.parameterKey)) {
+        // Проверяем, является ли значение временем в формате HH:mm
+        if (RegExp(r'^\d{1,2}:\d{2}$').hasMatch(value)) {
+          return 'Было в $value';
+        }
+      }
+
+      final displayValue = value;
+      final unit = _getUnitForParameter(entry.parameterKey);
+
+      // Проверяем, не содержит ли значение уже единицу измерения
+      if (unit.isNotEmpty && !displayValue.contains(unit)) {
+        return '$displayValue $unit';
+      }
+      return displayValue;
+    }
+
+    // Для Map с одним значением - извлекаем его
+    if (value is Map && value.length == 1) {
+      final singleValue = value.values.first;
+      if (singleValue is bool && !timeParams.contains(entry.parameterKey)) {
+        return singleValue ? 'Было' : 'Не было';
+      }
+      if (singleValue is String || singleValue is num) {
+        final displayValue = singleValue.toString();
+
+        // Для временных параметров добавляем "Было в"
+        if (timeParams.contains(entry.parameterKey) && singleValue is String) {
+          if (RegExp(r'^\d{1,2}:\d{2}$').hasMatch(displayValue)) {
+            return 'Было в $displayValue';
+          }
+        }
+
+        final unit = _getUnitForParameter(entry.parameterKey);
+        // Проверяем, не содержит ли значение уже единицу измерения
+        if (unit.isNotEmpty && !displayValue.contains(unit)) {
+          return '$displayValue $unit';
+        }
+        return displayValue;
+      }
+    }
+    // Обработка Map (например {value: "каша"} или blood_pressure)
     if (value is Map) {
       // Для blood_pressure
       if (entry.parameterKey == 'blood_pressure') {
-        final systolic = value['systolic'] ?? value['sys'] ?? 0;
-        final diastolic = value['diastolic'] ?? value['dia'] ?? 0;
-        return '$systolic/$diastolic мм рт.ст.';
-      }
+        log.d('_formatEntryValue: blood_pressure raw value = $value');
+        dynamic bpValue = value;
 
-      // Для других Map значений - проверяем вложенное value
-      if (value.containsKey('value')) {
-        final innerValue = value['value'];
-        if (innerValue is bool) {
-          return innerValue ? 'Было' : 'Не было';
+        // Рекурсивно извлекаем вложенные значения {value: {value: {...}}}
+        while (bpValue is Map &&
+            bpValue.containsKey('value') &&
+            bpValue['value'] is Map) {
+          log.d('_formatEntryValue: unwrapping, current = $bpValue');
+          bpValue = bpValue['value'];
         }
-        return innerValue?.toString() ?? '—';
+
+        log.d('_formatEntryValue: final bpValue = $bpValue');
+
+        // Если после извлечения получили Map с ключом 'value' и строковым значением
+        if (bpValue is Map &&
+            bpValue.containsKey('value') &&
+            bpValue['value'] is String) {
+          final stringValue = bpValue['value'] as String;
+          log.d('_formatEntryValue: Found string value: $stringValue');
+
+          // Парсим строку формата "120/80 мм рт.ст." или "120/80"
+          final match = RegExp(r'(\d+)/(\d+)').firstMatch(stringValue);
+          if (match != null) {
+            final systolic = int.tryParse(match.group(1) ?? '0') ?? 0;
+            final diastolic = int.tryParse(match.group(2) ?? '0') ?? 0;
+            log.d(
+              '_formatEntryValue: Parsed from string: systolic=$systolic, diastolic=$diastolic',
+            );
+
+            if (systolic == 0 && diastolic == 0) {
+              return '—';
+            }
+            return '$systolic/$diastolic мм рт.ст.';
+          }
+          // Если не удалось распарсить, возвращаем как есть
+          return stringValue;
+        }
+
+        if (bpValue is Map) {
+          final systolic = bpValue['systolic'] ?? bpValue['sys'] ?? 0;
+          final diastolic = bpValue['diastolic'] ?? bpValue['dia'] ?? 0;
+
+          log.d('_formatEntryValue: systolic=$systolic, diastolic=$diastolic');
+
+          // Если оба значения 0, возможно данные не были сохранены
+          if (systolic == 0 && diastolic == 0) {
+            log.w('_formatEntryValue: Both values are 0');
+            return '—';
+          }
+
+          return '$systolic/$diastolic мм рт.ст.';
+        }
+
+        log.w('_formatEntryValue: bpValue is not a Map after unwrapping');
+        return '—';
       }
 
-      // Попытка вывести все значения из Map
-      return value.values.map((v) => v.toString()).join(', ');
+      // Попытка вывести все значения из Map (только не null и не пустые)
+      if (value is Map) {
+        final mapValues = value.values
+            .where((v) => v != null)
+            .map((v) => v.toString())
+            .where((s) => s.isNotEmpty && !s.startsWith('{'))
+            .toList();
+
+        if (mapValues.isNotEmpty) {
+          return mapValues.join(', ');
+        }
+      }
+
+      return '—';
     }
 
-    // Обработка строк "true"/"false"
-    if (value is String) {
+    // Обработка строк "true"/"false" (кроме показателей времени)
+    if (value is String && !timeParams.contains(entry.parameterKey)) {
       final lowerValue = value.toLowerCase();
       if (lowerValue == 'true') return 'Было';
       if (lowerValue == 'false') return 'Не было';
       if (value == '1') return 'Было';
       if (value == '0') return 'Не было';
+
+      // Проверка на JSON-подобные строки типа "{value: каша}" или "{value: значение}"
+      if (value.startsWith('{') && value.contains('value:')) {
+        // Извлекаем значение из строки формата "{value: значение}"
+        final regex = RegExp(r'\{value:\s*(.+?)\}');
+        final match = regex.firstMatch(value);
+        if (match != null && match.group(1) != null) {
+          return match.group(1)!.trim();
+        }
+      }
+
+      // Другие JSON-подобные строки - не показываем
+      if (value.startsWith('{') || value.startsWith('[')) {
+        return '—';
+      }
     }
 
     // Стандартное отображение с единицами измерения
     String displayValue = value?.toString() ?? '—';
+
+    // Проверка на случайное отображение Map.toString()
+    if (displayValue.startsWith('{') && displayValue.contains(':')) {
+      return '—';
+    }
+
+    // Не добавляем единицы измерения для пустых значений
+    if (displayValue == '—') {
+      return displayValue;
+    }
+
     final unit = _getUnitForParameter(entry.parameterKey);
-    if (unit.isNotEmpty && displayValue != '—') {
+    // Проверяем, не содержит ли значение уже единицу измерения
+    if (unit.isNotEmpty && !displayValue.contains(unit)) {
       displayValue = '$displayValue $unit';
     }
 
@@ -5006,26 +4898,10 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     );
   }
 
-  String _getUnitForParameter(String key) {
-    switch (key) {
-      case 'temperature':
-        return '°C';
-      case 'weight':
-        return 'кг';
-      case 'saturation':
-      case 'oxygen_saturation':
-        return '%';
-      case 'blood_sugar':
-      case 'sugar_level':
-        return 'ммоль/л';
-      case 'pulse':
-        return 'уд/мин';
-      case 'respiratory_rate':
-        return 'дв/мин';
-      default:
-        return '';
-    }
-  }
+  /// Получить единицу измерения для параметра
+  /// Делегирует вызов в утилиты для централизованного управления
+  String _getUnitForParameter(String key) =>
+      diary_utils.getUnitForParameter(key);
 
   Widget _buildRouteSheetTab(BuildContext context) {
     return BlocBuilder<RouteSheetCubit, RouteSheetState>(
@@ -5096,8 +4972,14 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                         builder: (context, authState) {
                           // Проверяем роль и тип аккаунта пользователя
                           // Скрываем управление маршрутным листом для:
+                          // - пользователя с accountType == 'doctor' или 'caregiver'
                           // - сотрудника-си́делки в организации (hasRole('caregiver'))
                           // - пользователя с accountType == 'client' и ролью 'caregiver'
+                          final isDoctorOrCaregiver =
+                              authState is AuthAuthenticated &&
+                              (authState.user.accountType == 'doctor' ||
+                                  authState.user.accountType == 'caregiver');
+
                           final isOrganizationCaregiver =
                               authState is AuthAuthenticated &&
                               authState.user.hasRole('caregiver');
@@ -5107,20 +4989,13 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                               authState.user.accountType == 'client' &&
                               authState.user.hasRole('caregiver');
 
-                          // Debug: log current accountType and roles to help diagnose visibility
-                          if (authState is AuthAuthenticated) {
-                            log.d(
-                              'Auth debug (empty-state): accountType=${authState.user.accountType}, roles=${authState.user.roles}',
-                            );
-                          } else {
-                            log.d(
-                              'Auth debug (empty-state): not authenticated',
-                            );
-                          }
+                          final isCaregiver =
+                              isDoctorOrCaregiver ||
+                              isOrganizationCaregiver ||
+                              isClientCaregiver;
 
-                          // Если сиделка в организации ИЛИ клиент с ролью сиделки,
-                          // показываем информацию без кнопок
-                          if (isOrganizationCaregiver || isClientCaregiver) {
+                          // Если сиделка/врач, показываем информацию без кнопок
+                          if (isCaregiver) {
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
@@ -5209,179 +5084,170 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
 
         // Показываем данные в виде временных слотов
         return SafeArea(
-          child: RefreshIndicator(
-            onRefresh: () async {
-              context.read<RouteSheetCubit>().loadRouteSheet();
-              await Future.delayed(const Duration(milliseconds: 500));
-            },
-            color: AppConfig.primaryColor,
-            child: SingleChildScrollView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              child: SizedBox(
-                height: MediaQuery.of(context).size.height - 200,
+          child: Column(
+            children: [
+              // Дата выбора
+              Padding(
+                padding: const EdgeInsets.all(16),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Дата выбора
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'НАЖМИТЕ, ЧТОБЫ ВЫБРАТЬ ДАТУ ИСТОРИИ ЗАПОЛНЕНИЯ',
-                            style: GoogleFonts.firaSans(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          InkWell(
-                            onTap: () {
-                              setState(() {
-                                _isRouteSheetDatePickerExpanded =
-                                    !_isRouteSheetDatePickerExpanded;
-                              });
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 14,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppConfig.primaryColor.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    DateFormat(
-                                      'EEEE, d MMMM yг',
-                                      'ru',
-                                    ).format(state.selectedDate),
-                                    style: GoogleFonts.firaSans(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                      color: AppConfig.primaryColor,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  const Icon(
-                                    Icons.keyboard_arrow_down,
-                                    color: AppConfig.primaryColor,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          if (_isRouteSheetDatePickerExpanded) ...[
-                            const SizedBox(height: 16),
-                            _buildInlineCalendar(state.selectedDate, (date) {
-                              context.read<RouteSheetCubit>().setSelectedDate(
-                                date,
-                              );
-                              setState(() {
-                                _isRouteSheetDatePickerExpanded = false;
-                              });
-                            }),
-                          ],
-                        ],
+                    Text(
+                      'НАЖМИТЕ, ЧТОБЫ ВЫБРАТЬ ДАТУ ИСТОРИИ ЗАПОЛНЕНИЯ',
+                      style: GoogleFonts.firaSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade600,
                       ),
                     ),
-                    // Манипуляции на сегодня
-                    Expanded(
+                    const SizedBox(height: 8),
+                    InkWell(
+                      onTap: () {
+                        setState(() {
+                          _isRouteSheetDatePickerExpanded =
+                              !_isRouteSheetDatePickerExpanded;
+                        });
+                      },
                       child: Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 16),
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.06),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        decoration: BoxDecoration(
+                          color: AppConfig.primaryColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Text(
-                              'Манипуляции на сегодня',
+                              DateFormat(
+                                'EEEE, d MMMM yг',
+                                'ru',
+                              ).format(state.selectedDate),
                               style: GoogleFonts.firaSans(
                                 fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.grey.shade900,
+                                fontWeight: FontWeight.w600,
+                                color: AppConfig.primaryColor,
                               ),
                             ),
-                            const SizedBox(height: 16),
-                            Expanded(child: _buildTimeSlots(tasksForDate)),
-                            const SizedBox(height: 16),
-                            BlocBuilder<AuthBloc, AuthState>(
-                              builder: (context, authState) {
-                                final isOrganizationCaregiver =
-                                    authState is AuthAuthenticated &&
-                                    authState.user.hasRole('caregiver');
-
-                                final isClientCaregiver =
-                                    authState is AuthAuthenticated &&
-                                    authState.user.accountType == 'client' &&
-                                    authState.user.hasRole('caregiver');
-
-                                // Debug: log current accountType and roles to help diagnose visibility
-                                if (authState is AuthAuthenticated) {
-                                  log.d(
-                                    'Auth debug (edit-button): accountType=${authState.user.accountType}, roles=${authState.user.roles}',
-                                  );
-                                } else {
-                                  log.d(
-                                    'Auth debug (edit-button): not authenticated',
-                                  );
-                                }
-
-                                if (isOrganizationCaregiver ||
-                                    isClientCaregiver) {
-                                  return const SizedBox.shrink();
-                                }
-
-                                return SizedBox(
-                                  width: double.infinity,
-                                  child: ElevatedButton(
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.grey.shade800,
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 14,
-                                      ),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      elevation: 0,
-                                    ),
-                                    onPressed: () {
-                                      _showManipulationsBottomSheet(context);
-                                    },
-                                    child: Text(
-                                      'Изменить',
-                                      style: GoogleFonts.firaSans(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w700,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              },
+                            const SizedBox(width: 8),
+                            const Icon(
+                              Icons.keyboard_arrow_down,
+                              color: AppConfig.primaryColor,
                             ),
                           ],
                         ),
                       ),
                     ),
+                    if (_isRouteSheetDatePickerExpanded) ...[
+                      const SizedBox(height: 16),
+                      _buildInlineCalendar(state.selectedDate, (date) {
+                        context.read<RouteSheetCubit>().setSelectedDate(date);
+                        setState(() {
+                          _isRouteSheetDatePickerExpanded = false;
+                        });
+                      }),
+                    ],
                   ],
                 ),
               ),
-            ),
+              // Манипуляции на сегодня
+              Expanded(
+                child: Container(
+                  margin: const EdgeInsets.only(
+                    left: 16,
+                    right: 16,
+                    bottom: 16,
+                  ),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.06),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Манипуляции на сегодня',
+                        style: GoogleFonts.firaSans(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.grey.shade900,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Expanded(child: _buildTimeSlots(tasksForDate)),
+                      const SizedBox(height: 16),
+                      BlocBuilder<AuthBloc, AuthState>(
+                        builder: (context, authState) {
+                          // Скрываем кнопку "Изменить" для:
+                          // - пользователя с accountType == 'doctor' или 'caregiver'
+                          // - сотрудника-сиделки в организации (hasRole('caregiver'))
+                          // - пользователя с accountType == 'client' и ролью 'caregiver'
+                          final isDoctorOrCaregiver =
+                              authState is AuthAuthenticated &&
+                              (authState.user.accountType == 'doctor' ||
+                                  authState.user.accountType == 'caregiver');
+
+                          final isOrganizationCaregiver =
+                              authState is AuthAuthenticated &&
+                              authState.user.hasRole('caregiver');
+
+                          final isClientCaregiver =
+                              authState is AuthAuthenticated &&
+                              authState.user.accountType == 'client' &&
+                              authState.user.hasRole('caregiver');
+
+                          final isCaregiver =
+                              isDoctorOrCaregiver ||
+                              isOrganizationCaregiver ||
+                              isClientCaregiver;
+
+                          if (isCaregiver) {
+                            return const SizedBox.shrink();
+                          }
+
+                          return SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.grey.shade800,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                elevation: 0,
+                              ),
+                              onPressed: () {
+                                _showManipulationsBottomSheet(context);
+                              },
+                              child: Text(
+                                'Изменить',
+                                style: GoogleFonts.firaSans(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         );
       },
@@ -5817,7 +5683,38 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                 child: ElevatedButton(
                   onPressed: () {
                     Navigator.of(dialogContext).pop();
-                    // Используем pageContext для следующего диалога
+
+                    // Определяем тип задачи (по relatedDiaryKey или названию)
+                    final taskKey =
+                        task.relatedDiaryKey ?? _getKeyFromTitle(task.title);
+                    const booleanKeys = {
+                      'skin_moisturizing',
+                      'hygiene',
+                      'defecation',
+                      'nausea',
+                      'vomiting',
+                      'dyspnea',
+                      'itching',
+                      'cough',
+                      'dry_mouth',
+                      'hiccup',
+                      'taste_disorder',
+                      'walk',
+                      'urine',
+                    };
+
+                    // Для булевых задач открываем диалог "Было / Не было",
+                    // чтобы сохранять строго boolean-значение
+                    if (booleanKeys.contains(taskKey)) {
+                      _showBooleanCompleteDialog(
+                        pageContext,
+                        task,
+                        routeSheetCubit,
+                      );
+                      return;
+                    }
+
+                    // Иначе открываем детализированный диалог ввода значения
                     _showCompleteTaskDialog(pageContext, task, routeSheetCubit);
                   },
                   style: ElevatedButton.styleFrom(
@@ -5930,7 +5827,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
       'hiccup',
       'taste_disorder',
       'walk',
-      'diaper_change',
     ];
 
     const measurementParams = [
@@ -5941,10 +5837,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
       'oxygen_saturation',
       'respiratory_rate',
       'pain_level',
-      'sugar_level',
-      'blood_sugar',
-      'fluid_intake',
-      'urine_output',
     ];
 
     const textParams = [
@@ -5953,9 +5845,16 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
       'meal',
       'medication',
       'vitamins',
+      'blood_sugar',
+      'sugar_level',
+      'fluid_intake',
+      'urine_output',
+      'fluid_and_urine',
     ];
 
     const timeRangeParams = ['sleep'];
+
+    const timeParams = ['diaper_change'];
 
     if (measurementParams.contains(taskKey)) {
       _showMeasurementCompleteDialog(context, task, cubit, taskKey);
@@ -5963,6 +5862,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
       _showTextCompleteDialog(context, task, cubit, taskKey);
     } else if (timeRangeParams.contains(taskKey)) {
       _showTimeRangeCompleteDialog(context, task, cubit);
+    } else if (timeParams.contains(taskKey)) {
+      _showTimeCompleteDialog(context, task, cubit, taskKey);
     } else {
       // По умолчанию показываем было/не было
       _showBooleanCompleteDialog(context, task, cubit);
@@ -5974,6 +5875,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     const titleToKey = {
       'Прогулка': 'walk',
       'Давление': 'blood_pressure',
+      'Артериальное давление': 'blood_pressure',
+      'Измерение давления': 'blood_pressure',
       'Температура': 'temperature',
       'Пульс': 'pulse',
       'Сатурация': 'saturation',
@@ -5981,18 +5884,25 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
       'Смена подгузников': 'diaper_change',
       'Увлажнение кожи': 'skin_moisturizing',
       'Приём лекарств': 'medication',
+      'Прием лекарств': 'medication', // Вариант без ё
+      'Лекарства': 'medication',
       'Кормление': 'feeding',
       'Прием пищи': 'meal',
+      'Приём пищи': 'meal',
       'Выпито жидкости': 'fluid_intake',
       'Выделено мочи': 'urine_output',
       'Выделение мочи': 'urine',
+      'Выпито/выделено и цвет мочи': 'fluid_and_urine',
       'Дефекация': 'defecation',
       'Гигиена': 'hygiene',
       'Когнитивные игры': 'cognitive_games',
       'Приём витаминов': 'vitamins',
+      'Прием витаминов': 'vitamins', // Вариант без ё
+      'Витамины': 'vitamins',
       'Сон': 'sleep',
       'Уровень боли': 'pain_level',
       'Уровень сахара': 'blood_sugar',
+      'Уровень сахара в крови': 'blood_sugar',
       'Тошнота': 'nausea',
       'Одышка': 'dyspnea',
       'Кашель': 'cough',
@@ -6051,28 +5961,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                         Navigator.of(dialogContext).pop();
                         await cubit.completeTask(
                           taskId: task.id,
-                          comment: 'Было',
+                          value: {'value': true},
                         );
-                        // Обновляем дневник локально: создаём запись "Было"
-                        try {
-                          final key =
-                              task.relatedDiaryKey ??
-                              _getKeyFromTitle(task.title);
-                          final type = _getParameterType(key);
-                          context.read<DiaryBloc>().add(
-                            CreateMeasurement(
-                              patientId: widget.patientId,
-                              type: type,
-                              key: key,
-                              value: true,
-                              recordedAt: DateTime.now(),
-                            ),
-                          );
-                        } catch (e) {
-                          log.e(
-                            'Failed to dispatch diary update after task complete: $e',
-                          );
-                        }
                         if (pageContext.mounted) {
                           ScaffoldMessenger.of(pageContext).showSnackBar(
                             SnackBar(
@@ -6109,28 +5999,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                         Navigator.of(dialogContext).pop();
                         await cubit.completeTask(
                           taskId: task.id,
-                          comment: 'Не было',
+                          value: {'value': false},
                         );
-                        // Обновляем дневник локально: создаём запись "Не было"
-                        try {
-                          final key =
-                              task.relatedDiaryKey ??
-                              _getKeyFromTitle(task.title);
-                          final type = _getParameterType(key);
-                          context.read<DiaryBloc>().add(
-                            CreateMeasurement(
-                              patientId: widget.patientId,
-                              type: type,
-                              key: key,
-                              value: false,
-                              recordedAt: DateTime.now(),
-                            ),
-                          );
-                        } catch (e) {
-                          log.e(
-                            'Failed to dispatch diary update after task complete: $e',
-                          );
-                        }
                         if (pageContext.mounted) {
                           ScaffoldMessenger.of(pageContext).showSnackBar(
                             SnackBar(
@@ -6346,66 +6216,11 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                         }
 
                         Navigator.of(dialogContext).pop();
+
                         await cubit.completeTask(
                           taskId: task.id,
-                          comment: value,
+                          value: {'value': value},
                         );
-                        // Обновляем дневник локально: создаём запись с текстовым описанием
-                        try {
-                          final key =
-                              task.relatedDiaryKey ??
-                              _getKeyFromTitle(task.title);
-                          final type = _getParameterType(key);
-                          context.read<DiaryBloc>().add(
-                            CreateMeasurement(
-                              patientId: widget.patientId,
-                              type: type,
-                              key: key,
-                              value: value,
-                              recordedAt: DateTime.now(),
-                            ),
-                          );
-                        } catch (e) {
-                          log.e(
-                            'Failed to dispatch diary update after text complete: $e',
-                          );
-                        }
-                        // Обновляем дневник локально: создаём запись с измерением
-                        try {
-                          final key =
-                              task.relatedDiaryKey ??
-                              _getKeyFromTitle(task.title);
-                          dynamic measuredValue = value;
-                          if (key == 'blood_pressure' && value.contains('/')) {
-                            final parts = value.split('/');
-                            if (parts.length >= 2) {
-                              final sys = int.tryParse(parts[0].trim()) ?? 0;
-                              final dia =
-                                  int.tryParse(
-                                    parts[1].trim().split(' ').first,
-                                  ) ??
-                                  0;
-                              measuredValue = {
-                                'systolic': sys,
-                                'diastolic': dia,
-                              };
-                            }
-                          }
-                          final type = _getParameterType(key);
-                          context.read<DiaryBloc>().add(
-                            CreateMeasurement(
-                              patientId: widget.patientId,
-                              type: type,
-                              key: key,
-                              value: measuredValue,
-                              recordedAt: DateTime.now(),
-                            ),
-                          );
-                        } catch (e) {
-                          log.e(
-                            'Failed to dispatch diary update after measurement complete: $e',
-                          );
-                        }
                         if (pageContext.mounted) {
                           ScaffoldMessenger.of(pageContext).showSnackBar(
                             SnackBar(
@@ -6462,6 +6277,14 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
       hint = 'Например: шахматы, чтение книги';
     } else if (taskKey == 'medication' || taskKey == 'vitamins') {
       hint = 'Например: парацетамол, витамин D';
+    } else if (taskKey == 'blood_sugar' || taskKey == 'sugar_level') {
+      hint = 'Например: 5.5 ммоль/л или нормально';
+    } else if (taskKey == 'fluid_intake') {
+      hint = 'Например: 200 мл или 1 стакан';
+    } else if (taskKey == 'urine_output') {
+      hint = 'Например: 150 мл или много';
+    } else if (taskKey == 'fluid_and_urine') {
+      hint = 'Например: выпито 200 мл, выделено 150 мл, цвет светло-желтый';
     }
 
     showDialog(
@@ -6547,9 +6370,10 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                         }
 
                         Navigator.of(dialogContext).pop();
+
                         await cubit.completeTask(
                           taskId: task.id,
-                          comment: value,
+                          value: {'value': value},
                         );
                         if (pageContext.mounted) {
                           ScaffoldMessenger.of(pageContext).showSnackBar(
@@ -6584,6 +6408,166 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                 ],
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Диалог выполнения для показателей с выбором времени (смена подгузников)
+  void _showTimeCompleteDialog(
+    BuildContext context,
+    RouteSheetTask task,
+    RouteSheetCubit cubit,
+    String taskKey,
+  ) {
+    final pageContext = context;
+    TimeOfDay? selectedTime;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (ctx, setModalState) => Dialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  task.title,
+                  style: GoogleFonts.firaSans(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: AppConfig.primaryColor,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Укажите время выполнения',
+                  style: GoogleFonts.firaSans(
+                    fontSize: 14,
+                    color: Colors.grey.shade600,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                GestureDetector(
+                  onTap: () async {
+                    final time = await showTimePickerModal(
+                      context: ctx,
+                      title: 'Выберите время',
+                      description: 'Время начала',
+                      initialTime: TimeOfDay.now(),
+                    );
+                    if (time != null) {
+                      setModalState(() => selectedTime = time);
+                    }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 14,
+                      horizontal: 24,
+                    ),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.access_time, color: AppConfig.primaryColor),
+                        const SizedBox(width: 8),
+                        Text(
+                          selectedTime != null
+                              ? selectedTime!.format(ctx)
+                              : 'Выбрать время',
+                          style: GoogleFonts.firaSans(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: selectedTime != null
+                                ? Colors.grey.shade900
+                                : Colors.grey.shade500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          side: BorderSide(color: Colors.grey.shade300),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                        ),
+                        child: Text(
+                          'Отмена',
+                          style: GoogleFonts.firaSans(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: selectedTime != null
+                            ? () async {
+                                Navigator.pop(ctx);
+                                await cubit.completeTask(
+                                  taskId: task.id,
+                                  value: {'value': selectedTime!.format(ctx)},
+                                );
+                                if (pageContext.mounted) {
+                                  ScaffoldMessenger.of(
+                                    pageContext,
+                                  ).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Задача отмечена как выполненная',
+                                        style: GoogleFonts.firaSans(),
+                                      ),
+                                      backgroundColor: Colors.green,
+                                    ),
+                                  );
+                                }
+                              }
+                            : null,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppConfig.primaryColor,
+                          disabledBackgroundColor: Colors.grey.shade300,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                        ),
+                        child: Text(
+                          'Сохранить',
+                          style: GoogleFonts.firaSans(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -6638,8 +6622,10 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                     Expanded(
                       child: InkWell(
                         onTap: () async {
-                          final time = await showTimePicker(
+                          final time = await showTimePickerModal(
                             context: context,
+                            title: 'Выберите время',
+                            description: 'Время начала',
                             initialTime: startTime ?? TimeOfDay.now(),
                           );
                           if (time != null) {
@@ -6694,8 +6680,10 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                     Expanded(
                       child: InkWell(
                         onTap: () async {
-                          final time = await showTimePicker(
+                          final time = await showTimePickerModal(
                             context: context,
+                            title: 'Выберите время',
+                            description: 'Время окончания',
                             initialTime: endTime ?? TimeOfDay.now(),
                           );
                           if (time != null) {
@@ -6787,28 +6775,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                           Navigator.of(dialogContext).pop();
                           await cubit.completeTask(
                             taskId: task.id,
-                            comment: value,
+                            value: {'value': value},
                           );
-                          // Обновляем дневник локально: создаём запись для диапазона времени
-                          try {
-                            final key =
-                                task.relatedDiaryKey ??
-                                _getKeyFromTitle(task.title);
-                            final type = _getParameterType(key);
-                            context.read<DiaryBloc>().add(
-                              CreateMeasurement(
-                                patientId: widget.patientId,
-                                type: type,
-                                key: key,
-                                value: value,
-                                recordedAt: DateTime.now(),
-                              ),
-                            );
-                          } catch (e) {
-                            log.e(
-                              'Failed to dispatch diary update after time-range complete: $e',
-                            );
-                          }
                           if (pageContext.mounted) {
                             ScaffoldMessenger.of(pageContext).showSnackBar(
                               SnackBar(
@@ -6906,8 +6874,10 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                           const SizedBox(height: 8),
                           GestureDetector(
                             onTap: () async {
-                              final time = await showTimePicker(
+                              final time = await showTimePickerModal(
                                 context: context,
+                                title: 'Выберите время',
+                                description: 'Время начала',
                                 initialTime: TimeOfDay.fromDateTime(
                                   task.startAt,
                                 ),
@@ -6967,8 +6937,10 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                           const SizedBox(height: 8),
                           GestureDetector(
                             onTap: () async {
-                              final time = await showTimePicker(
+                              final time = await showTimePickerModal(
                                 context: context,
+                                title: 'Выберите время',
+                                description: 'Время окончания',
                                 initialTime: TimeOfDay.fromDateTime(task.endAt),
                               );
                               if (time != null) {
@@ -7527,14 +7499,21 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
       if (inviteUrl != null) {
         // Заменяем localhost на правильный домен
         final correctedUrl = inviteUrl
-            .replaceAll('localhost:3000', 'api.sistemizdorovya.ru')
+            .replaceAll(
+              'localhost:3000',
+              'https://сотрудники.системыздоровья.рф',
+            )
             .replaceAll(
               'http://localhost:3000',
-              'https://api.sistemizdorovya.ru',
+              'https://сотрудники.системыздоровья.рф',
             )
             .replaceAll(
               'https://localhost:3000',
-              'https://api.sistemizdorovya.ru',
+              'https://сотрудники.системыздоровья.рф',
+            )
+            .replaceAll(
+              'api.sistemizdorovya.ru',
+              'сотрудники.системыздоровья.рф',
             );
 
         setState(() {
@@ -8088,20 +8067,40 @@ class _ManipulationSettingsModalContentState
   }
 
   Future<void> _loadEmployees() async {
+    setState(() {
+      _isLoadingEmployees = true;
+    });
+
     try {
       final repository = EmployeeRepository();
       final employees = await repository.getEmployees();
+
       if (mounted) {
         setState(() {
           _employees = employees;
           _isLoadingEmployees = false;
         });
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       if (mounted) {
         setState(() {
           _isLoadingEmployees = false;
         });
+        // Показываем ошибку пользователю
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Ошибка загрузки сотрудников: ${e.toString()}',
+              style: GoogleFonts.firaSans(),
+            ),
+            backgroundColor: Colors.red,
+            action: SnackBarAction(
+              label: 'Повторить',
+              textColor: Colors.white,
+              onPressed: _loadEmployees,
+            ),
+          ),
+        );
       }
     }
   }
@@ -8110,82 +8109,140 @@ class _ManipulationSettingsModalContentState
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) => Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Выберите сотрудника',
-              style: GoogleFonts.firaSans(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: Colors.grey.shade900,
-              ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) {
+          // Подписываемся на обновления состояния родительского виджета
+          return Container(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.7,
             ),
-            const SizedBox(height: 16),
-            if (_isLoadingEmployees)
-              const Center(child: CircularProgressIndicator())
-            else if (_employees.isEmpty)
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Center(
-                  child: Text(
-                    'Нет доступных сотрудников',
-                    style: GoogleFonts.firaSans(
-                      fontSize: 14,
-                      color: Colors.grey.shade600,
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Выберите сотрудника',
+                      style: GoogleFonts.firaSans(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.grey.shade900,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(ctx),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                if (_isLoadingEmployees)
+                  const Padding(
+                    padding: EdgeInsets.all(40),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (_employees.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.people_outline,
+                          size: 48,
+                          color: Colors.grey.shade400,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Нет доступных сотрудников',
+                          style: GoogleFonts.firaSans(
+                            fontSize: 14,
+                            color: Colors.grey.shade600,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 16),
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            _loadEmployees();
+                          },
+                          icon: const Icon(Icons.refresh),
+                          label: Text(
+                            'Обновить список',
+                            style: GoogleFonts.firaSans(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppConfig.primaryColor,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 12,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: _employees.length,
+                      itemBuilder: (context, index) {
+                        final employee = _employees[index];
+                        final isSelected = _selectedEmployee?.id == employee.id;
+                        return ListTile(
+                          leading: _buildEmployeeAvatar(employee),
+                          title: Text(
+                            _getEmployeeDisplayName(employee),
+                            style: GoogleFonts.firaSans(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          subtitle: Text(
+                            employee.roleDisplayName,
+                            style: GoogleFonts.firaSans(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                          trailing: isSelected
+                              ? Icon(
+                                  Icons.check_circle,
+                                  color: AppConfig.primaryColor,
+                                )
+                              : null,
+                          onTap: () {
+                            setState(() {
+                              _selectedEmployee = employee;
+                            });
+                            Navigator.pop(ctx);
+                          },
+                        );
+                      },
                     ),
                   ),
-                ),
-              )
-            else
-              Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: _employees.length,
-                  itemBuilder: (context, index) {
-                    final employee = _employees[index];
-                    final isSelected = _selectedEmployee?.id == employee.id;
-                    return ListTile(
-                      leading: _buildEmployeeAvatar(employee),
-                      title: Text(
-                        _getEmployeeDisplayName(employee),
-                        style: GoogleFonts.firaSans(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      subtitle: Text(
-                        employee.roleDisplayName,
-                        style: GoogleFonts.firaSans(
-                          fontSize: 12,
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
-                      trailing: isSelected
-                          ? Icon(
-                              Icons.check_circle,
-                              color: AppConfig.primaryColor,
-                            )
-                          : null,
-                      onTap: () {
-                        setState(() {
-                          _selectedEmployee = employee;
-                        });
-                        Navigator.pop(ctx);
-                      },
-                    );
-                  },
-                ),
-              ),
-            const SizedBox(height: 16),
-          ],
-        ),
+                const SizedBox(height: 16),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -8266,64 +8323,29 @@ class _ManipulationSettingsModalContentState
 
   /// Получить отображаемое имя сотрудника
   String _getEmployeeDisplayName(Employee employee) {
-    // Если у сотрудника есть имя, используем его
-    if (employee.fullName != 'Без имени') {
-      return employee.fullName;
-    }
-
-    // Для владельца без имени показываем название организации
-    if (employee.role == 'owner') {
-      try {
-        final orgBloc = context.read<OrganizationBloc>();
-        final orgState = orgBloc.state;
-        if (orgState is OrganizationLoaded) {
-          final orgName = (orgState.organization['name'] as String?)?.trim();
-          if (orgName != null && orgName.isNotEmpty) {
-            return orgName;
-          }
-        }
-      } catch (e) {
-        // Если OrganizationBloc недоступен, используем значение по умолчанию
-      }
-
-      // Значение по умолчанию для владельца
-      return 'Erdaulet Organization';
-    }
-
+    // Модель Employee уже правильно обрабатывает отображение:
+    // - Для организаций (owner) показывает название организации из поля name
+    // - Для врачей и сиделок показывает имя и фамилию
     return employee.fullName;
   }
 
   /// Получить инициалы сотрудника с учетом организации
   String _getEmployeeInitials(Employee employee) {
-    // Для владельца без имени используем инициалы организации
-    if (employee.role == 'owner' && employee.fullName == 'Без имени') {
-      // Пытаемся получить название организации из контекста
-      try {
-        final orgBloc = context.read<OrganizationBloc>();
-        final orgState = orgBloc.state;
-        if (orgState is OrganizationLoaded) {
-          final orgName = (orgState.organization['name'] as String?)?.trim();
-          if (orgName != null && orgName.isNotEmpty) {
-            // Берем первые буквы слов из названия организации
-            final words = orgName.split(' ');
-            if (words.length >= 2) {
-              return '${words[0][0].toUpperCase()}${words[1][0].toUpperCase()}';
-            } else if (words.isNotEmpty) {
-              return words[0].length >= 2
-                  ? '${words[0][0].toUpperCase()}${words[0][1].toUpperCase()}'
-                  : words[0][0].toUpperCase();
-            }
-          }
-        }
-      } catch (e) {
-        // Если OrganizationBloc недоступен, используем значение по умолчанию
+    // Для организаций (владельцев) используем инициалы из названия организации
+    if (employee.isOrganization &&
+        employee.name != null &&
+        employee.name!.isNotEmpty) {
+      final words = employee.name!.split(' ');
+      if (words.length >= 2) {
+        return '${words[0][0].toUpperCase()}${words[1][0].toUpperCase()}';
+      } else if (words.isNotEmpty) {
+        return words[0].length >= 2
+            ? '${words[0][0].toUpperCase()}${words[0][1].toUpperCase()}'
+            : words[0][0].toUpperCase();
       }
-
-      // Значение по умолчанию для владельца
-      return 'EO';
     }
 
-    // Обычная логика для всех остальных
+    // Для врачей и сиделок используем инициалы из имени и фамилии
     final first = employee.firstName?.isNotEmpty == true
         ? employee.firstName![0].toUpperCase()
         : '';
@@ -8872,59 +8894,6 @@ class _ManipulationSettingsModalContentState
       ),
     );
   }
-}
-
-// Custom painter for dashed circle
-class _DashedCirclePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2 - 1;
-
-    // Draw circle with radial gradient
-    final gradient = RadialGradient(
-      colors: [
-        const Color(0xFFA0E7E5).withOpacity(0.3),
-        const Color(0xFF61B4C6).withOpacity(0.2),
-      ],
-    );
-    final circlePaint = Paint()
-      ..shader = gradient.createShader(
-        Rect.fromCircle(center: center, radius: radius),
-      )
-      ..style = PaintingStyle.fill;
-
-    canvas.drawCircle(center, radius, circlePaint);
-
-    // Draw dashed outline with rectangular dashes
-    final dashPaint = Paint()
-      ..color = const Color(0xFFA0E7E5).withOpacity(0.6)
-      ..strokeWidth = 3.5
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    const dashCount = 20;
-    const dashAngle = (2 * 3.14159) / dashCount;
-    const dashLength =
-        dashAngle * 0.4; // 40% of dash angle for dash, 60% for space
-
-    for (int i = 0; i < dashCount; i++) {
-      final angle = i * dashAngle;
-      final startAngle = angle;
-      final endAngle = angle + dashLength;
-
-      final path = Path();
-      path.addArc(
-        Rect.fromCircle(center: center, radius: radius),
-        startAngle,
-        endAngle - startAngle,
-      );
-      canvas.drawPath(path, dashPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class MyCustomScrollBehavior extends MaterialScrollBehavior {

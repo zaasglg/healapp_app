@@ -1,16 +1,144 @@
-# healapp_mobile
+# HealApp Mobile
 
-A new Flutter project.
+Мобильная экосистема для ухода за пожилыми людьми, состоящая из двух приложений:
+1. **Клиентское приложение**: Поиск сиделок (Heal Link), заказ товаров по уходу (Vita Box), отслеживание здоровья пациентов (Diary)
+2. **Приложение специалиста**: Для сиделок и медсестер для управления задачами и дневниками пациентов
 
-## Getting Started
+## Технологический стек
 
-This project is a starting point for a Flutter application.
+- **Flutter** (Dart) - фреймворк для разработки
+- **BLoC** - управление состоянием
+- **GoRouter** - навигация
+- **Dio** - сетевые запросы
 
-A few resources to get you started if this is your first Flutter project:
+## Быстрый старт
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+### Установка зависимостей
+```bash
+flutter pub get
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+### Запуск приложения
+```bash
+flutter run
+```
+
+### Сборка
+
+#### Android APK
+```bash
+flutter build apk
+```
+
+#### iOS Archive
+```bash
+flutter build ipa
+```
+
+## Команды для разработки
+
+### Тестирование
+```bash
+# Запуск всех тестов
+flutter test
+
+# Запуск отдельного теста
+flutter test test/path/to/file_test.dart
+
+# Запуск теста по имени
+flutter test --name "описание теста"
+```
+
+### Качество кода
+```bash
+# Анализ кода
+flutter analyze
+
+# Форматирование кода (запускайте перед коммитом!)
+dart format .
+
+# Очистка проекта
+flutter clean
+```
+
+## Документация
+
+### Общая документация
+- **[AGENTS.md](AGENTS.md)** - инструкции для AI агентов и разработчиков
+- **[ТЗ приложения.md](ТЗ%20приложения.md)** - подробное техническое задание
+
+### Документация по регистрации
+- **[REGISTRATION_FLOW.md](REGISTRATION_FLOW.md)** - полная документация процесса регистрации и передачи ролей
+- **[REGISTRATION_DIAGRAM.md](REGISTRATION_DIAGRAM.md)** - визуальные схемы и диаграммы процесса
+- **[REGISTRATION_QUICK_REFERENCE.md](REGISTRATION_QUICK_REFERENCE.md)** - быстрая справка по регистрации
+
+## Архитектура проекта
+
+```
+lib/
+├── screens/          # UI страницы и виджеты
+├── bloc/             # BLoC компоненты (события, состояния, логика)
+├── repositories/     # Слой доступа к данным (API, БД)
+├── models/           # Модели данных (DTOs)
+└── config/           # Конфигурация приложения (цвета, константы)
+```
+
+## Соглашения о коде
+
+### Именование
+- **Классы/Типы**: `PascalCase` (например, `HomePage`, `AuthRepository`)
+- **Переменные/Функции**: `camelCase` (например, `fetchUserData`, `isLoading`)
+- **Файлы**: `snake_case` (например, `home_page.dart`, `auth_repository.dart`)
+
+### Импорты
+- Используйте **относительные импорты** для файлов внутри одной фичи/модуля
+- Используйте **пакетные импорты** для общих утилит или при пересечении архитектурных границ
+- Группируйте импорты: Dart SDK → Flutter → Сторонние пакеты → Файлы проекта
+
+### Обработка ошибок
+- **Repositories**: Перехватывают исключения и выбрасывают кастомные ошибки
+- **BLoC**: Перехватывают ошибки из репозиториев и эмитят состояния ошибок
+- **UI**: Слушают состояния BLoC и показывают ошибки через SnackBar/Toast
+
+### Форматирование
+- Строго придерживайтесь стандартного Dart форматирования (`dart format`)
+- Используйте trailing commas `,` в widget tree для правильного форматирования
+
+## Управление состоянием (BLoC)
+
+- Events и States должны быть equitable (пакет `equatable`)
+- Держите логику вне UI - UI только диспатчит события и рендерит на основе состояния
+- UI не должен обрабатывать сырые исключения
+
+## Тестирование
+
+- **Unit Tests**: Фокус на Repositories и BLoCs. Мокируйте зависимости используя `mockito` или `mocktail`
+- **Widget Tests**: Проверяйте критические UI флоу и взаимодействия
+- Всегда убеждайтесь, что `flutter test` проходит перед отправкой изменений
+
+## Типы пользователей (Роли)
+
+| Тип | account_type | Описание |
+|-----|--------------|----------|
+| Пансионат | `pansionat` | Учреждение для ухода за подопечными |
+| Агентство | `agency` | Агентство по предоставлению услуг ухода |
+| Частная сиделка | `specialist` | Индивидуальный специалист по уходу |
+| Клиент | `client` | Человек, который ищет услуги по уходу |
+
+Подробнее о процессе регистрации и передаче ролей см. в [REGISTRATION_FLOW.md](REGISTRATION_FLOW.md)
+
+## Ресурсы
+
+- [Flutter документация](https://docs.flutter.dev/)
+- [Dart документация](https://dart.dev/guides)
+- [BLoC библиотека](https://bloclibrary.dev/)
+- [GoRouter документация](https://pub.dev/packages/go_router)
+- [Dio документация](https://pub.dev/packages/dio)
+
+## Лицензия
+
+[Информация о лицензии]
+
+## Контакты
+
+[Контактная информация]

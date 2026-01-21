@@ -1,5 +1,3 @@
-import 'package:logger/logger.dart';
-
 /// Глобальный логгер приложения
 /// Используй `log` для логирования вместо print()
 ///
@@ -11,27 +9,15 @@ import 'package:logger/logger.dart';
 /// log.e('Error message');      // Error
 /// log.t('Trace message');      // Trace (verbose)
 /// ```
-final log = Logger(
-  printer: PrettyPrinter(
-    methodCount: 0,
-    errorMethodCount: 5,
-    lineLength: 80,
-    colors: true,
-    printEmojis: true,
-    dateTimeFormat: DateTimeFormat.onlyTimeAndSinceStart,
-  ),
-  level: Level.debug,
-);
+class AppLogger {
+  void d(String message) => print('[DEBUG] $message');
+  void i(String message) => print('[INFO] $message');
+  void w(String message) => print('[WARNING] $message');
+  void e(String message) => print('[ERROR] $message');
+  void t(String message) => print('[TRACE] $message');
+}
+
+final log = AppLogger();
 
 /// Логгер для продакшена (без цветов и стектрейсов)
-final logProd = Logger(
-  printer: PrettyPrinter(
-    methodCount: 0,
-    errorMethodCount: 3,
-    lineLength: 80,
-    colors: false,
-    printEmojis: false,
-    dateTimeFormat: DateTimeFormat.onlyTime,
-  ),
-  level: Level.warning,
-);
+final logProd = AppLogger();

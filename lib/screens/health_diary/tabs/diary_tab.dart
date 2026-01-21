@@ -1,34 +1,35 @@
+/// Вкладка дневника здоровья
+///
+/// Основная вкладка с показателями здоровья,
+/// закреплёнными индикаторами и категориями.
+
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_fonts/google_fonts.dart';
-
+import '../../../bloc/diary/diary_bloc.dart';
+import '../../../bloc/diary/diary_state.dart';
+import '../../../bloc/diary/diary_event.dart';
 import '../../../config/app_config.dart';
-import '../../../repositories/diary_repository.dart';
-import '../../../utils/app_icons.dart';
-import '../utils/indicator_utils.dart';
-import '../widgets/pinned_indicators_section.dart';
-import '../widgets/expandable_section.dart';
+import '../../../utils/health_diary/health_diary_utils.dart';
+import '../widgets/indicators/indicators.dart';
+import '../widgets/modals/modals.dart';
 
-/// Таб "Дневник" для страницы дневника здоровья
+/// Вкладка дневника здоровья
 class DiaryTab extends StatefulWidget {
-  final Diary? diary;
-  final AnimationController animationController;
-  final Animation<double> expandAnimation;
-  final int? selectedIndicatorIndex;
-  final int? animatingFromIndex;
-  final Function(int) onIndicatorSelected;
-  final VoidCallback onIndicatorClosed;
-  final Function(BuildContext, String, String) onShowIndicatorModal;
+  /// ID дневника
+  final int diaryId;
+
+  /// Является ли пользователь владельцем
+  final bool isOwner;
+
+  /// Callback при изменении данных
+  final VoidCallback? onDataChanged;
 
   const DiaryTab({
     super.key,
-    required this.diary,
-    required this.animationController,
-    required this.expandAnimation,
-    required this.selectedIndicatorIndex,
-    required this.animatingFromIndex,
-    required this.onIndicatorSelected,
-    required this.onIndicatorClosed,
-    required this.onShowIndicatorModal,
+    required this.diaryId,
+    this.isOwner = true,
+    this.onDataChanged,
   });
 
   @override
@@ -36,430 +37,331 @@ class DiaryTab extends StatefulWidget {
 }
 
 class _DiaryTabState extends State<DiaryTab> {
-  bool _isPhysicalExpanded = false;
-  bool _isExcretionExpanded = false;
-  bool _isAccessManagementExpanded = false;
-
-  final Map<int, TextEditingController> _measurementControllers = {};
-  final Map<int, TextEditingController> _timeControllers = {};
-  final Map<int, int> _fillCounts = {};
-
-  @override
-  void dispose() {
-    for (final controller in _measurementControllers.values) {
-      controller.dispose();
-    }
-    for (final controller in _timeControllers.values) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
+  // Состояние раскрытых категорий
+  final Map<String, bool> _expandedCategories = {};
 
   @override
   Widget build(BuildContext context) {
-    final pinnedParameters = widget.diary?.pinnedParameters ?? [];
+    return BlocBuilder<DiaryBloc, DiaryState>(
+      builder: (context, state) {
+        if (state is DiaryLoading) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-    return SafeArea(
-      child: Column(
-        children: [
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildPinnedIndicatorsSection(pinnedParameters),
-                  const SizedBox(height: 32),
-                  _buildAllIndicatorsSection(),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+        if (state is DiaryError) {
+          return _buildErrorState(state.message);
+        }
 
-  Widget _buildPinnedIndicatorsSection(List<PinnedParameter> pinnedParameters) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Закрепленные показатели',
-          style: GoogleFonts.firaSans(
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-            color: Colors.grey.shade900,
-          ),
-        ),
-        const SizedBox(height: 12),
-        PinnedIndicatorsSection(
-          pinnedParameters: pinnedParameters,
-          animationController: widget.animationController,
-          expandAnimation: widget.expandAnimation,
-          selectedIndicatorIndex: widget.selectedIndicatorIndex,
-          animatingFromIndex: widget.animatingFromIndex,
-          onIndicatorSelected: widget.onIndicatorSelected,
-          onIndicatorClosed: widget.onIndicatorClosed,
-          measurementControllers: _measurementControllers,
-          timeControllers: _timeControllers,
-          fillCounts: _fillCounts,
-          onFillCountChanged: (index, count) {
-            setState(() {
-              _fillCounts[index] = count;
-            });
-          },
-        ),
-      ],
-    );
-  }
+        if (state is DiaryLoaded) {
+          return _buildContent(state);
+        }
 
-  Widget _buildAllIndicatorsSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Все показатели',
-          style: GoogleFonts.firaSans(
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-            color: Colors.grey.shade900,
-          ),
-        ),
-        const SizedBox(height: 12),
-        _buildDiagnosesCard(),
-        _buildIndicatorsCard(),
-        _buildChangeIndicatorsButton(),
-        const SizedBox(height: 12),
-        _buildAccessManagementCard(),
-      ],
-    );
-  }
-
-  Widget _buildDiagnosesCard() {
-    final diagnoses = widget.diary?.patient?.diagnoses ?? [];
-
-    return ExpandableSection(
-      title: 'Диагнозы пациента',
-      subtitle: diagnoses.isNotEmpty
-          ? diagnoses.take(3).join(', ') +
-                (diagnoses.length > 3 ? ' и т.д.' : '')
-          : 'Диагнозы не указаны',
-      isExpanded: _isPhysicalExpanded,
-      onToggle: () {
-        setState(() {
-          _isPhysicalExpanded = !_isPhysicalExpanded;
-        });
+        return const SizedBox.shrink();
       },
-      expandedContent: diagnoses.isNotEmpty
-          ? GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 2.5,
-              ),
-              itemCount: diagnoses.length,
-              itemBuilder: (context, index) {
-                return Container(
-                  alignment: Alignment.center,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: AppConfig.primaryColor.withOpacity(0.5),
-                      width: 1.5,
-                    ),
-                  ),
-                  child: Text(
-                    diagnoses[index],
-                    style: GoogleFonts.firaSans(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade800,
-                    ),
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                );
-              },
-            )
-          : Text(
-              'У пациента не указаны диагнозы',
-              style: GoogleFonts.firaSans(
-                fontSize: 14,
-                color: Colors.grey.shade600,
-              ),
-            ),
     );
   }
 
-  Widget _buildIndicatorsCard() {
-    final settings = widget.diary?.settings;
-    final allIndicators = settings?['all_indicators'] as List<dynamic>? ?? [];
+  Widget _buildContent(DiaryLoaded state) {
+    final diary = state.diary;
+    final entries = diary.entries;
+    final pinnedIndicators = diary.pinnedParameters;
+    final settings = diary.settings;
+    final allIndicators = _normalizeIndicatorKeys(
+      settings?['all_indicators'] ?? settings?['allIndicators'],
+    );
 
-    return ExpandableSection(
-      title: 'Показатели ухода',
-      subtitle: allIndicators.isNotEmpty
-          ? allIndicators
-                    .take(3)
-                    .map((e) => getIndicatorLabel(e.toString()))
-                    .join(', ') +
-                (allIndicators.length > 3 ? ' и т.д.' : '')
-          : 'Показатели не заданы',
-      isExpanded: _isExcretionExpanded,
-      onToggle: () {
-        setState(() {
-          _isExcretionExpanded = !_isExcretionExpanded;
-        });
+    final careIndicators = allIndicators
+        .where((e) => careIndicatorKeys.contains(e))
+        .toList();
+    final physicalIndicators = allIndicators
+        .where((e) => physicalIndicatorKeys.contains(e))
+        .toList();
+    final excretionIndicators = allIndicators
+        .where((e) => excretionIndicatorKeys.contains(e))
+        .toList();
+    final customIndicators = allIndicators
+        .where(
+          (e) =>
+              !careIndicatorKeys.contains(e) &&
+              !physicalIndicatorKeys.contains(e) &&
+              !excretionIndicatorKeys.contains(e),
+        )
+        .toList();
+
+    // Преобразуем закреплённые индикаторы
+    final pinnedData = pinnedIndicators.map((indicator) {
+      final key = indicator.key;
+      final entry = entries.where((e) => e.parameterKey == key).firstOrNull;
+
+      return PinnedIndicatorData(
+        key: key,
+        label: getIndicatorLabel(key),
+        value: entry?.value,
+        lastFillTime: entry?.recordedAt,
+        isFilled: entry?.value != null,
+      );
+    }).toList();
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
       },
-      expandedContent: allIndicators.isNotEmpty
-          ? GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 2.5,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Закреплённые показатели
+            if (pinnedData.isNotEmpty) ...[
+              PinnedIndicatorsSection(
+                indicators: pinnedData,
+                showSettings: widget.isOwner,
+                onFill: (key, value) => _fillIndicator(key, value),
+                onSettingsTap: () => _openPinnedSettings(),
               ),
-              itemCount: allIndicators.length,
-              itemBuilder: (context, index) {
-                final key = allIndicators[index].toString();
-                final label = getIndicatorLabel(key);
-                return GestureDetector(
-                  onTap: () => widget.onShowIndicatorModal(context, key, label),
-                  child: Container(
-                    alignment: Alignment.center,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: AppConfig.primaryColor.withOpacity(0.5),
-                        width: 1.5,
-                      ),
-                    ),
-                    child: Text(
-                      label,
-                      style: GoogleFonts.firaSans(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade800,
-                      ),
-                      textAlign: TextAlign.center,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                );
-              },
-            )
-          : Text(
-              'Показатели ухода не заданы',
+              const SizedBox(height: 24),
+            ],
+
+            // Категории показателей
+            Text(
+              'Все показатели',
               style: GoogleFonts.firaSans(
-                fontSize: 14,
-                color: Colors.grey.shade600,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: Colors.grey.shade900,
               ),
             ),
-    );
-  }
+            const SizedBox(height: 12),
 
-  Widget _buildChangeIndicatorsButton() {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: ElevatedButton(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          elevation: 0,
-        ),
-        onPressed: () {
-          // TODO: Open change indicators dialog
-        },
-        child: Text(
-          'Изменить показатели',
-          style: GoogleFonts.firaSans(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: AppConfig.primaryColor,
-          ),
-        ),
-      ),
-    );
-  }
+            // Категория ухода
+            CategoryCard(
+              title: 'Уход',
+              indicators: careIndicators,
+              fallbackIndicators: careIndicatorKeys,
+              isExpanded: _expandedCategories['care'] ?? false,
+              onToggle: () => _toggleCategory('care'),
+              onIndicatorTap: (key, label) => _showIndicatorModal(key),
+            ),
+            const SizedBox(height: 12),
 
-  Widget _buildAccessManagementCard() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          InkWell(
-            onTap: () {
-              setState(() {
-                _isAccessManagementExpanded = !_isAccessManagementExpanded;
-              });
-            },
-            borderRadius: BorderRadius.vertical(
-              top: const Radius.circular(12),
-              bottom: Radius.circular(_isAccessManagementExpanded ? 0 : 12),
+            // Физические показатели
+            CategoryCard(
+              title: 'Физические показатели',
+              indicators: physicalIndicators,
+              fallbackIndicators: physicalIndicatorKeys,
+              isExpanded: _expandedCategories['physical'] ?? false,
+              onToggle: () => _toggleCategory('physical'),
+              onIndicatorTap: (key, label) => _showIndicatorModal(key),
             ),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-              child: Column(
-                children: [
-                  Text(
-                    'Управление доступом',
-                    style: GoogleFonts.firaSans(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.red.shade600,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 3),
-                  Center(
-                    child: Transform.rotate(
-                      angle: _isAccessManagementExpanded ? 4.71239 : 1.5708,
-                      child: Image.asset(
-                        AppIcons.chevron_right,
-                        width: 20,
-                        height: 20,
-                        fit: BoxFit.contain,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (_isAccessManagementExpanded) _buildAccessManagementContent(),
-        ],
-      ),
-    );
-  }
+            const SizedBox(height: 12),
 
-  Widget _buildAccessManagementContent() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
-        border: Border(top: BorderSide(color: Colors.grey.shade300, width: 1)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Текущий доступ',
-            style: GoogleFonts.firaSans(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade900,
+            // Выделение мочи и кала
+            CategoryCard(
+              title: 'Выделение мочи и кала',
+              indicators: excretionIndicators,
+              fallbackIndicators: excretionIndicatorKeys,
+              isExpanded: _expandedCategories['excretion'] ?? false,
+              onToggle: () => _toggleCategory('excretion'),
+              onIndicatorTap: (key, label) => _showIndicatorModal(key),
             ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Организация (этот аккаунт)',
-            style: GoogleFonts.firaSans(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade900,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'ID: e252b78d-5b09-4417-a9e1-2e9264d501d3',
-            style: GoogleFonts.firaSans(
-              fontSize: 13,
-              color: Colors.grey.shade700,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Divider(color: Colors.grey.shade300, height: 1),
-          const SizedBox(height: 12),
-          Text(
-            'Все сотрудники пансионата имеют доступ к дневнику автоматически.',
-            style: GoogleFonts.firaSans(
-              fontSize: 13,
-              color: Colors.grey.shade700,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Организация',
-                      style: GoogleFonts.firaSans(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade900,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Организация',
-                      style: GoogleFonts.firaSans(
-                        fontSize: 13,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                icon: Icon(
-                  Icons.delete_outline,
-                  color: Colors.grey.shade400,
-                  size: 20,
-                ),
-                onPressed: () {
-                  // TODO: Handle delete organization
-                },
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
+            if (customIndicators.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              CategoryCard(
+                title: 'Дополнительные показатели',
+                indicators: customIndicators,
+                fallbackIndicators: const [],
+                isExpanded: _expandedCategories['custom'] ?? false,
+                onToggle: () => _toggleCategory('custom'),
+                onIndicatorTap: (key, label) => _showIndicatorModal(key),
               ),
             ],
-          ),
-        ],
+          ],
+        ),
       ),
     );
+  }
+
+  Widget _buildErrorState(String message) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 64, color: Colors.red.shade300),
+            const SizedBox(height: 16),
+            Text(
+              'Ошибка загрузки',
+              style: GoogleFonts.firaSans(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              style: GoogleFonts.firaSans(
+                fontSize: 14,
+                color: Colors.grey.shade600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: () {
+                context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppConfig.primaryColor,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: Text(
+                'Повторить',
+                style: GoogleFonts.firaSans(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _toggleCategory(String category) {
+    setState(() {
+      _expandedCategories[category] = !(_expandedCategories[category] ?? false);
+    });
+  }
+
+  List<String> _normalizeIndicatorKeys(dynamic rawIndicators) {
+    if (rawIndicators == null) return [];
+
+    if (rawIndicators is List) {
+      return rawIndicators
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+
+    if (rawIndicators is String) {
+      final cleaned = rawIndicators.replaceAll('[', '').replaceAll(']', '');
+      return cleaned
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+
+    return [];
+  }
+
+  Future<void> _fillIndicator(String key, dynamic value) async {
+    // Преобразуем значение в строку для API
+    final stringValue = value?.toString() ?? '';
+
+    context.read<DiaryBloc>().add(
+      AddDiaryEntry(
+        diaryId: widget.diaryId,
+        parameterKey: key,
+        value: stringValue,
+      ),
+    );
+    widget.onDataChanged?.call();
+  }
+
+  Future<void> _showIndicatorModal(String key) async {
+    final paramType = getParameterType(key);
+    final label = getIndicatorLabel(key);
+    final description = getIndicatorDescription(key);
+    final unit = getUnitForParameter(key);
+
+    dynamic result;
+
+    switch (paramType) {
+      case 'boolean':
+        result = await showBooleanModal(
+          context: context,
+          title: label,
+          description: description,
+        );
+        break;
+
+      case 'measurement':
+        final measureResult = await showMeasurementModal(
+          context: context,
+          title: label,
+          description: description,
+          unit: unit,
+          key: key,
+        );
+        result = measureResult?.value;
+        break;
+
+      case 'text':
+        result = await showTextInputModal(
+          context: context,
+          title: label,
+          description: description,
+          hint: 'Введите информацию...',
+        );
+        break;
+
+      case 'time_range':
+        final timeResult = await showTimeRangeModal(
+          context: context,
+          title: label,
+          description: description,
+        );
+        if (timeResult != null) {
+          result = {
+            'start':
+                '${timeResult.startTime.hour.toString().padLeft(2, '0')}:${timeResult.startTime.minute.toString().padLeft(2, '0')}',
+            'end':
+                '${timeResult.endTime.hour.toString().padLeft(2, '0')}:${timeResult.endTime.minute.toString().padLeft(2, '0')}',
+          };
+        }
+        break;
+
+      case 'urine_color':
+        result = await showUrineColorModal(context: context, title: label);
+        break;
+
+      case 'medication':
+        final medResult = await showMedicationModal(
+          context: context,
+          title: label,
+        );
+        if (medResult != null) {
+          result = {'name': medResult.name, 'dosage': medResult.dosage};
+        }
+        break;
+
+      default:
+        result = await showTextInputModal(
+          context: context,
+          title: label,
+          description: description,
+          hint: 'Введите значение...',
+        );
+    }
+
+    if (result != null) {
+      await _fillIndicator(key, result);
+    }
+  }
+
+  void _openPinnedSettings() {
+    // TODO: Открыть экран настройки закреплённых показателей
   }
 }

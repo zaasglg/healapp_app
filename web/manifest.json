@@ -1,13 +1,14 @@
 {
-    "name": "healapp_mobile",
-    "short_name": "healapp_mobile",
+    "name": "Здраво специалисты",
+    "short_name": "Здраво",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#ffffff",
+    "theme_color": "#61B4C6",
+    "description": "Мобильная экосистема для ухода за пожилыми людьми: поиск сиделок, заказ продуктов отслеживание здоровья",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
+    "categories": ["health", "medical", "lifestyle"],
     "icons": [
         {
             "src": "icons/Icon-192.png",

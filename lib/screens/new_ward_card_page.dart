@@ -703,9 +703,9 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                                 child: Padding(
                                                   padding:
                                                       const EdgeInsets.symmetric(
-                                                    horizontal: 16,
-                                                    vertical: 14,
-                                                  ),
+                                                        horizontal: 16,
+                                                        vertical: 14,
+                                                      ),
                                                   child: Text(
                                                     disease,
                                                     style: GoogleFonts.firaSans(
@@ -726,8 +726,9 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                                   });
                                                 },
                                                 child: Container(
-                                                  padding:
-                                                      const EdgeInsets.all(12),
+                                                  padding: const EdgeInsets.all(
+                                                    12,
+                                                  ),
                                                   child: const Icon(
                                                     Icons.delete_outline,
                                                     size: 20,
@@ -1073,9 +1074,9 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                                 child: Padding(
                                                   padding:
                                                       const EdgeInsets.symmetric(
-                                                    horizontal: 16,
-                                                    vertical: 14,
-                                                  ),
+                                                        horizontal: 16,
+                                                        vertical: 14,
+                                                      ),
                                                   child: Text(
                                                     service,
                                                     style: GoogleFonts.firaSans(
@@ -1096,8 +1097,9 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                                   });
                                                 },
                                                 child: Container(
-                                                  padding:
-                                                      const EdgeInsets.all(12),
+                                                  padding: const EdgeInsets.all(
+                                                    12,
+                                                  ),
                                                   child: const Icon(
                                                     Icons.delete_outline,
                                                     size: 20,
@@ -1198,14 +1200,10 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                   const SizedBox(height: 12),
                                   ..._wishes.map((wish) {
                                     return Container(
-                                      margin: const EdgeInsets.only(
-                                        bottom: 8,
-                                      ),
+                                      margin: const EdgeInsets.only(bottom: 8),
                                       decoration: BoxDecoration(
                                         color: const Color(0xFFA0D9E3),
-                                        borderRadius: BorderRadius.circular(
-                                          12,
-                                        ),
+                                        borderRadius: BorderRadius.circular(12),
                                       ),
                                       child: Row(
                                         children: [
@@ -1213,9 +1211,9 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                             child: Padding(
                                               padding:
                                                   const EdgeInsets.symmetric(
-                                                horizontal: 16,
-                                                vertical: 14,
-                                              ),
+                                                    horizontal: 16,
+                                                    vertical: 14,
+                                                  ),
                                               child: Text(
                                                 wish,
                                                 style: GoogleFonts.firaSans(
@@ -1233,8 +1231,7 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                               });
                                             },
                                             child: Container(
-                                              padding:
-                                                  const EdgeInsets.all(12),
+                                              padding: const EdgeInsets.all(12),
                                               child: const Icon(
                                                 Icons.delete_outline,
                                                 size: 20,

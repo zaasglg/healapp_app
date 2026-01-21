@@ -550,20 +550,12 @@ class RouteSheetRepository {
         queryParameters: queryParams.isNotEmpty ? queryParams : null,
       );
 
-      log.d(
-        'RouteSheetRepository: Ответ получен, statusCode: ${response.statusCode}',
-      );
-      log.d('RouteSheetRepository: Response data: ${response.data}');
-
       final data = response.data;
       if (data == null) {
-        log.e('RouteSheetRepository: Response data is null!');
         throw const ServerException('Не удалось получить маршрутный лист');
       }
 
       final result = RouteSheetResponse.fromJson(data);
-      log.i('=== RouteSheetRepository.getRouteSheet: УСПЕШНО ===');
-      log.d('RouteSheetRepository: Получено ${result.tasks.length} задач');
 
       return result;
     } catch (e, stackTrace) {
@@ -737,15 +729,21 @@ class RouteSheetRepository {
     DateTime? completedAt,
   }) async {
     try {
-      log.d('RouteSheetRepository: Выполнение задачи $taskId');
+      log.d('RouteSheetRepository.completeTask: taskId=$taskId');
+      log.d('RouteSheetRepository.completeTask: value=$value');
+      log.d('RouteSheetRepository.completeTask: comment=$comment');
+
+      final requestData = {
+        if (comment != null) 'comment': comment,
+        if (value != null) 'value': value,
+        if (completedAt != null) 'completed_at': _formatDateTime(completedAt),
+      };
+
+      log.d('RouteSheetRepository.completeTask: requestData=$requestData');
 
       final response = await _apiClient.post<Map<String, dynamic>>(
         '/route-sheet/$taskId/complete',
-        data: {
-          if (comment != null) 'comment': comment,
-          if (value != null) 'value': value,
-          if (completedAt != null) 'completed_at': _formatDateTime(completedAt),
-        },
+        data: requestData,
       );
 
       final data = response.data;
@@ -753,7 +751,7 @@ class RouteSheetRepository {
         throw const ServerException('Не удалось выполнить задачу');
       }
 
-      log.i('RouteSheetRepository: Задача выполнена');
+      log.d('RouteSheetRepository.completeTask: response data=$data');
       return RouteSheetTask.fromJson(data);
     } catch (e) {
       log.e('RouteSheetRepository: Ошибка выполнения задачи: $e');
@@ -895,18 +893,11 @@ class RouteSheetRepository {
         data: requestData,
       );
 
-      log.d(
-        'RouteSheetRepository: Ответ получен, statusCode: ${response.statusCode}',
-      );
-      log.d('RouteSheetRepository: Response data: ${response.data}');
-
       final data = response.data;
       if (data == null) {
-        log.e('RouteSheetRepository: Response data is null!');
         throw const ServerException('Не удалось создать шаблон');
       }
 
-      log.i('=== RouteSheetRepository.createTaskTemplate: УСПЕШНО ===');
       return TaskTemplate.fromJson(data);
     } catch (e, stackTrace) {
       log.e('=== RouteSheetRepository.createTaskTemplate: ОШИБКА ===');

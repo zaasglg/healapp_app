@@ -169,9 +169,9 @@ class InvitationRepository {
 
   /// Создать приглашение для клиента (родственника)
   /// POST /api/v1/invitations/client
-  /// 
+  ///
   /// [patientId] - ID пациента, к которому привязываем клиента
-  /// 
+  ///
   /// Возвращает Map с invitation и invite_url
   /// Выбрасывает [ApiException] при ошибке
   Future<Map<String, dynamic>> createClientInvitation({
@@ -195,7 +195,9 @@ class InvitationRepository {
     } on ValidationException {
       rethrow;
     } on UnauthorizedException {
-      throw const UnauthorizedException('Недостаточно прав для создания приглашения');
+      throw const UnauthorizedException(
+        'Недостаточно прав для создания приглашения',
+      );
     } on ApiException {
       rethrow;
     } catch (e) {

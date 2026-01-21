@@ -141,7 +141,7 @@ class CreateMeasurement extends DiaryEvent {
   final int patientId;
   final String type;
   final String key;
-  final dynamic value;
+  final Map<String, dynamic> value;
   final DateTime recordedAt;
 
   final String? notes;

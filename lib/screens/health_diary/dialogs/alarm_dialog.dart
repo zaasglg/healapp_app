@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../repositories/alarm_repository.dart';
+import '../widgets/modals/time_picker_modal.dart';
 
 /// Данные нового будильника для передачи в callback
 class AlarmFormData {
@@ -353,26 +354,11 @@ class _AlarmDialogState extends State<AlarmDialog> {
         if (_selectedTimes.length < 4)
           InkWell(
             onTap: () async {
-              final time = await showTimePicker(
+              final time = await showTimePickerModal(
                 context: context,
+                title: 'Выберите время',
+                description: 'Время приёма препарата',
                 initialTime: TimeOfDay.now(),
-                builder: (context, child) {
-                  return MediaQuery(
-                    data: MediaQuery.of(
-                      context,
-                    ).copyWith(alwaysUse24HourFormat: true),
-                    child: Theme(
-                      data: Theme.of(context).copyWith(
-                        colorScheme: ColorScheme.light(
-                          primary: _activeColor,
-                          onPrimary: Colors.white,
-                          onSurface: Colors.grey.shade900,
-                        ),
-                      ),
-                      child: child!,
-                    ),
-                  );
-                },
               );
               if (time != null) {
                 setState(() {

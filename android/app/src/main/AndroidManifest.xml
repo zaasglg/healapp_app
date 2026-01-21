@@ -44,6 +44,10 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data
                     android:scheme="https"
+                    android:host="xn--b1adcidzqardbm3jua9b.xn--p1ai"
+                    android:pathPrefix="/invite"/>
+                <data
+                    android:scheme="https"
                     android:host="api.sistemizdorovya.ru"
                     android:pathPrefix="/invite"/>
             </intent-filter>
@@ -52,6 +56,10 @@
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="http"
+                    android:host="xn--b1adcidzqardbm3jua9b.xn--p1ai"
+                    android:pathPrefix="/invite"/>
                 <data
                     android:scheme="http"
                     android:host="api.sistemizdorovya.ru"

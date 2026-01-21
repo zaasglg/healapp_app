@@ -19,7 +19,6 @@ class OrganizationRepository {
       final response = await _apiClient.get('/organization');
 
       final data = response.data as Map<String, dynamic>;
-      log.d('Ответ GET /organization: $data');
 
       // API возвращает данные организации напрямую (с id, name, phone, address и т.д.)
       // Проверяем наличие обязательных полей
@@ -27,7 +26,6 @@ class OrganizationRepository {
         throw const ServerException('Данные организации не получены');
       }
 
-      log.d('Полные данные организации: $data');
       return data;
     } on ApiException {
       rethrow;
@@ -90,8 +88,10 @@ class OrganizationRepository {
     try {
       log.d('=== assignDiaryAccess API call ===');
       log.d('Endpoint: POST /organization/assign-diary-access');
-      log.d('Request data: {patient_id: $patientId, user_id: $userId, permission: $permission}');
-      
+      log.d(
+        'Request data: {patient_id: $patientId, user_id: $userId, permission: $permission}',
+      );
+
       final response = await _apiClient.post(
         '/organization/assign-diary-access',
         data: {
@@ -100,7 +100,7 @@ class OrganizationRepository {
           'permission': permission,
         },
       );
-      
+
       log.d('Response status: ${response.statusCode}');
       log.d('Response data: ${response.data}');
       log.d('Доступ к дневнику назначен: patient=$patientId, user=$userId');
@@ -114,9 +114,7 @@ class OrganizationRepository {
       log.e('=== Unknown error in assignDiaryAccess ===');
       log.e('Type: ${e.runtimeType}');
       log.e('Error: $e');
-      throw ServerException(
-        'Ошибка при назначении доступа: ${e.toString()}',
-      );
+      throw ServerException('Ошибка при назначении доступа: ${e.toString()}');
     }
   }
 
@@ -133,18 +131,13 @@ class OrganizationRepository {
     try {
       await _apiClient.delete(
         '/organization/revoke-diary-access',
-        data: {
-          'patient_id': patientId,
-          'user_id': userId,
-        },
+        data: {'patient_id': patientId, 'user_id': userId},
       );
       log.d('Доступ к дневнику отозван: patient=$patientId, user=$userId');
     } on ApiException {
       rethrow;
     } catch (e) {
-      throw ServerException(
-        'Ошибка при отзыве доступа: ${e.toString()}',
-      );
+      throw ServerException('Ошибка при отзыве доступа: ${e.toString()}');
     }
   }
 
@@ -160,7 +153,7 @@ class OrganizationRepository {
     try {
       log.d('=== getDiaryAccessList API call ===');
       log.d('Endpoint: GET /diary/$diaryId/access');
-      
+
       final response = await _apiClient.get('/diary/$diaryId/access');
 
       log.d('Response status: ${response.statusCode}');

@@ -40,25 +40,25 @@ class Employee {
         return name!;
       }
     }
-    
+
     // Для сотрудников/сиделок показываем имя и фамилию
     final parts = <String>[];
     if (lastName != null && lastName!.isNotEmpty) parts.add(lastName!);
     if (firstName != null && firstName!.isNotEmpty) parts.add(firstName!);
     if (middleName != null && middleName!.isNotEmpty) parts.add(middleName!);
-    
+
     if (parts.isNotEmpty) {
       return parts.join(' ');
     }
-    
+
     // Fallback на name если нет first_name/last_name
     if (name != null && name!.isNotEmpty) {
       return name!;
     }
-    
+
     return 'Без имени';
   }
-  
+
   /// Проверка является ли это организацией
   bool get isOrganization {
     // Если есть account_type, проверяем его
@@ -89,7 +89,7 @@ class Employee {
   factory Employee.fromJson(Map<String, dynamic> json) {
     // Логируем данные для отладки
     log.d('Employee.fromJson: $json');
-    
+
     // Пробуем разные варианты полей для аватара
     String? avatarUrl;
     if (json['avatar_url'] != null) {
@@ -101,7 +101,7 @@ class Employee {
     } else if (json['image'] != null) {
       avatarUrl = json['image'] as String?;
     }
-    
+
     return Employee(
       id: json['id'] as int,
       userId: json['user_id'] as int?,

@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Healapp Mobile</string>
+	<string>Здраво специалисты</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -44,6 +44,23 @@
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<!-- Custom URL Scheme для deep links -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>ru.sistemizdorovya.healapp</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>healapp</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Флаг для обработки Universal Links -->
+	<key>FlutterDeepLinkingEnabled</key>
 	<true/>
 </dict>
 </plist>

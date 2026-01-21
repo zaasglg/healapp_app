@@ -9,6 +9,7 @@ import '../repositories/diary_repository.dart';
 import '../bloc/diary/diary_bloc.dart';
 import '../bloc/diary/diary_event.dart';
 import '../bloc/diary/diary_state.dart';
+import 'health_diary/widgets/modals/time_picker_modal.dart';
 
 class EditDiaryEntryPage extends StatefulWidget {
   final DiaryEntry entry;
@@ -29,10 +30,14 @@ class EditDiaryEntryPage extends StatefulWidget {
 
 class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
   late TextEditingController _valueController;
+  late TextEditingController
+  _diastolicController; // Для диастолического давления
   late TextEditingController _notesController;
   late DateTime _selectedDate;
   late TimeOfDay _selectedTime;
   bool _isLoading = false;
+
+  bool get _isBloodPressure => widget.entry.parameterKey == 'blood_pressure';
 
   @override
   void initState() {
@@ -40,15 +45,23 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
     _selectedDate = widget.entry.recordedAt.toLocal();
     _selectedTime = TimeOfDay.fromDateTime(widget.entry.recordedAt.toLocal());
     _notesController = TextEditingController(text: widget.entry.notes ?? '');
+    _diastolicController = TextEditingController();
 
     // Инициализируем значение в зависимости от типа
     final value = widget.entry.value;
     String initialValue = '';
+    String diastolicValue = '';
     if (value is Map) {
       if (widget.entry.parameterKey == 'blood_pressure') {
-        final systolic = value['systolic'] ?? value['sys'] ?? '';
-        final diastolic = value['diastolic'] ?? value['dia'] ?? '';
-        initialValue = '$systolic/$diastolic';
+        dynamic bpValue = value;
+        // Если значение вложено в {value: {...}}, извлекаем его
+        if (bpValue.containsKey('value') && bpValue['value'] is Map) {
+          bpValue = bpValue['value'];
+        }
+        final systolic = bpValue['systolic'] ?? bpValue['sys'] ?? '';
+        final diastolic = bpValue['diastolic'] ?? bpValue['dia'] ?? '';
+        initialValue = systolic.toString();
+        diastolicValue = diastolic.toString();
       } else if (value.containsKey('value')) {
         initialValue = value['value'].toString();
       } else {
@@ -58,11 +71,13 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
       initialValue = value?.toString() ?? '';
     }
     _valueController = TextEditingController(text: initialValue);
+    _diastolicController = TextEditingController(text: diastolicValue);
   }
 
   @override
   void dispose() {
     _valueController.dispose();
+    _diastolicController.dispose();
     _notesController.dispose();
     super.dispose();
   }
@@ -99,7 +114,21 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
   }
 
   void _saveEntry(BuildContext blocContext) {
-    if (_valueController.text.isEmpty) {
+    // Для давления проверяем оба поля
+    if (_isBloodPressure) {
+      if (_valueController.text.isEmpty || _diastolicController.text.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Пожалуйста, введите оба значения давления',
+              style: GoogleFonts.firaSans(),
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+    } else if (_valueController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -115,19 +144,15 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
     setState(() => _isLoading = true);
 
     // Обрабатываем значение в зависимости от типа параметра
-    dynamic processedValue = _valueController.text;
-    if (widget.entry.parameterKey == 'blood_pressure' &&
-        processedValue.contains('/')) {
-      final parts = processedValue.split('/');
-      if (parts.length == 2) {
-        processedValue = {
-          'systolic': int.tryParse(parts[0].trim()) ?? 0,
-          'diastolic': int.tryParse(parts[1].trim()) ?? 0,
-        };
-      }
+    dynamic processedValue;
+    if (_isBloodPressure) {
+      processedValue = {
+        'systolic': int.tryParse(_valueController.text.trim()) ?? 0,
+        'diastolic': int.tryParse(_diastolicController.text.trim()) ?? 0,
+      };
     } else {
       // Для других параметров оборачиваем в объект value
-      processedValue = {'value': processedValue};
+      processedValue = {'value': _valueController.text};
     }
 
     // Формируем дату и время
@@ -141,13 +166,13 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
 
     // Обновляем запись
     blocContext.read<DiaryBloc>().add(
-          UpdateDiaryEntry(
-            entryId: widget.entry.id,
-            value: processedValue,
-            notes: _notesController.text.isEmpty ? null : _notesController.text,
-            recordedAt: recordedAt,
-          ),
-        );
+      UpdateDiaryEntry(
+        entryId: widget.entry.id,
+        value: processedValue,
+        notes: _notesController.text.isEmpty ? null : _notesController.text,
+        recordedAt: recordedAt,
+      ),
+    );
   }
 
   void _handleDiaryState(BuildContext context, DiaryState state) {
@@ -155,10 +180,7 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Запись обновлена',
-            style: GoogleFonts.firaSans(),
-          ),
+          content: Text('Запись обновлена', style: GoogleFonts.firaSans()),
           backgroundColor: Colors.green,
         ),
       );
@@ -168,10 +190,7 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            state.message,
-            style: GoogleFonts.firaSans(),
-          ),
+          content: Text(state.message, style: GoogleFonts.firaSans()),
           backgroundColor: Colors.red,
         ),
       );
@@ -235,26 +254,99 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
                   ),
                 ),
                 const SizedBox(height: 24),
-                // Поле значения
-                TextField(
-                  controller: _valueController,
-                  decoration: InputDecoration(
-                    labelText: 'Значение',
-                    hintText: 'Введите новое значение',
-                    hintStyle: GoogleFonts.firaSans(color: Colors.grey.shade400),
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
+                // Поле значения - для давления два поля
+                if (_isBloodPressure) ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _valueController,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: 'Систолическое',
+                            hintText: '120',
+                            hintStyle: GoogleFonts.firaSans(
+                              color: Colors.grey.shade400,
+                            ),
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 14,
+                            ),
+                          ),
+                          style: GoogleFonts.firaSans(),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Text(
+                          '/',
+                          style: GoogleFonts.firaSans(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: TextField(
+                          controller: _diastolicController,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: 'Диастолическое',
+                            hintText: '80',
+                            suffixText: 'мм рт.ст.',
+                            suffixStyle: GoogleFonts.firaSans(
+                              fontSize: 12,
+                              color: AppConfig.primaryColor,
+                            ),
+                            hintStyle: GoogleFonts.firaSans(
+                              color: Colors.grey.shade400,
+                            ),
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 14,
+                            ),
+                          ),
+                          style: GoogleFonts.firaSans(),
+                        ),
+                      ),
+                    ],
                   ),
-                  style: GoogleFonts.firaSans(),
-                ),
+                ] else ...[
+                  TextField(
+                    controller: _valueController,
+                    decoration: InputDecoration(
+                      labelText: 'Значение',
+                      hintText: 'Введите новое значение',
+                      hintStyle: GoogleFonts.firaSans(
+                        color: Colors.grey.shade400,
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                    ),
+                    style: GoogleFonts.firaSans(),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 // Поле заметок
                 TextField(
@@ -262,7 +354,9 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
                   decoration: InputDecoration(
                     labelText: 'Заметки',
                     hintText: 'Добавьте заметку (необязательно)',
-                    hintStyle: GoogleFonts.firaSans(color: Colors.grey.shade400),
+                    hintStyle: GoogleFonts.firaSans(
+                      color: Colors.grey.shade400,
+                    ),
                     filled: true,
                     fillColor: Colors.white,
                     border: OutlineInputBorder(
@@ -315,8 +409,11 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
                                   color: Colors.grey.shade900,
                                 ),
                               ),
-                              Icon(Icons.calendar_today,
-                                  size: 20, color: Colors.grey.shade600),
+                              Icon(
+                                Icons.calendar_today,
+                                size: 20,
+                                color: Colors.grey.shade600,
+                              ),
                             ],
                           ),
                         ),
@@ -326,8 +423,10 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
                     Expanded(
                       child: InkWell(
                         onTap: () async {
-                          final picked = await showTimePicker(
+                          final picked = await showTimePickerModal(
                             context: context,
+                            title: 'Выберите время',
+                            description: 'Время записи',
                             initialTime: _selectedTime,
                           );
                           if (picked != null) {
@@ -355,8 +454,11 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
                                   color: Colors.grey.shade900,
                                 ),
                               ),
-                              Icon(Icons.access_time,
-                                  size: 20, color: Colors.grey.shade600),
+                              Icon(
+                                Icons.access_time,
+                                size: 20,
+                                color: Colors.grey.shade600,
+                              ),
                             ],
                           ),
                         ),
@@ -410,8 +512,7 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
                                     width: 20,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 2,
-                                      valueColor:
-                                          AlwaysStoppedAnimation<Color>(
+                                      valueColor: AlwaysStoppedAnimation<Color>(
                                         Colors.white,
                                       ),
                                     ),
@@ -438,4 +539,3 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
     );
   }
 }
-

@@ -144,7 +144,8 @@ final GoRouter appRouter = GoRouter(
         final args = state.extra as Map<String, dynamic>;
         return EditPinnedIndicatorsPage(
           patientId: args['patientId'] as int,
-          currentPinnedParameters: args['pinnedParameters'] as List<PinnedParameter>,
+          currentPinnedParameters:
+              args['pinnedParameters'] as List<PinnedParameter>,
         );
       },
     ),
@@ -154,13 +155,17 @@ final GoRouter appRouter = GoRouter(
       builder: (context, state) {
         final args = state.extra as Map<String, dynamic>?;
         if (args == null) {
-          throw Exception('Missing required arguments for select-entry-to-edit');
+          throw Exception(
+            'Missing required arguments for select-entry-to-edit',
+          );
         }
         return SelectEntryToEditPage(
           diaryId: args['diaryId'] as int,
           patientId: args['patientId'] as int,
           entries: args['entries'] as List<DiaryEntry>,
-          pinnedParameters: (args['pinnedParameters'] as List<PinnedParameter>?) ?? [],
+          pinnedParameters:
+              (args['pinnedParameters'] as List<PinnedParameter>?) ?? [],
+          allIndicators: (args['allIndicators'] as List<String>?) ?? [],
         );
       },
     ),
