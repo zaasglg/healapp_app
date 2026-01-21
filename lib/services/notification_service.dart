@@ -139,16 +139,12 @@ class NotificationService {
                 DarwinNotificationAction.plain(
                   'accept',
                   'Принято',
-                  options: {
-                    DarwinNotificationActionOption.foreground,
-                  },
+                  options: {DarwinNotificationActionOption.foreground},
                 ),
                 DarwinNotificationAction.plain(
                   'decline',
                   'Не принято',
-                  options: {
-                    DarwinNotificationActionOption.destructive,
-                  },
+                  options: {DarwinNotificationActionOption.destructive},
                 ),
               ],
             ),
@@ -159,16 +155,12 @@ class NotificationService {
                 DarwinNotificationAction.plain(
                   'measure_now',
                   'Измерить сейчас',
-                  options: {
-                    DarwinNotificationActionOption.foreground,
-                  },
+                  options: {DarwinNotificationActionOption.foreground},
                 ),
                 DarwinNotificationAction.plain(
                   'remind_later',
                   'Напомнить позже',
-                  options: {
-                    DarwinNotificationActionOption.destructive,
-                  },
+                  options: {DarwinNotificationActionOption.destructive},
                 ),
               ],
             ),
@@ -204,19 +196,19 @@ class NotificationService {
   /// Обработка нажатия на уведомление
   void _onNotificationTapped(NotificationResponse response) {
     log.i('Уведомление нажато: ${response.payload}');
-    
+
     // Обрабатываем действия с кнопок
     if (response.actionId != null) {
       _handleNotificationAction(response.actionId!, response.payload);
     }
-    
+
     // Можно добавить навигацию к определённому экрану
   }
 
   /// Обработка действий с кнопок уведомлений
   void _handleNotificationAction(String actionId, String? payload) {
     log.i('Действие уведомления: $actionId, payload: $payload');
-    
+
     if (payload != null) {
       if (payload.startsWith('alarm_')) {
         final alarmId = int.tryParse(payload.replaceFirst('alarm_', ''));
@@ -254,10 +246,10 @@ class NotificationService {
   /// Обработка принятия будильника
   Future<void> _handleAlarmAccepted(int alarmId) async {
     log.i('Будильник $alarmId принят');
-    
+
     try {
       await _alarmRepository.acceptAlarm(alarmId);
-      
+
       // Показываем подтверждающее уведомление
       await showInstantNotification(
         title: 'Принято ✓',
@@ -275,10 +267,10 @@ class NotificationService {
   /// Обработка отклонения будильника
   Future<void> _handleAlarmDeclined(int alarmId) async {
     log.i('Будильник $alarmId отклонен');
-    
+
     try {
       await _alarmRepository.declineAlarm(alarmId);
-      
+
       // Показываем подтверждающее уведомление
       await showInstantNotification(
         title: 'Отклонено ✗',
@@ -296,14 +288,14 @@ class NotificationService {
   /// Обработка действия "Измерить сейчас" для закрепленного параметра
   Future<void> _handleMeasureNow(int patientId, String parameterKey) async {
     log.i('Измерить сейчас: пациент $patientId, параметр $parameterKey');
-    
+
     try {
       // Показываем подтверждающее уведомление
       await showInstantNotification(
         title: 'Открыть приложение',
         body: 'Откройте приложение для измерения показателя',
       );
-      
+
       // Здесь можно добавить навигацию к экрану измерения
       // или другую логику обработки
     } catch (e) {
@@ -314,19 +306,21 @@ class NotificationService {
   /// Обработка действия "Напомнить позже" для закрепленного параметра
   Future<void> _handleRemindLater(int patientId, String parameterKey) async {
     log.i('Напомнить позже: пациент $patientId, параметр $parameterKey');
-    
+
     try {
       // Планируем напоминание через 30 минут
       final reminderTime = DateTime.now().add(const Duration(minutes: 30));
-      
+
       await showInstantNotification(
         title: 'Напоминание отложено',
         body: 'Напомним через 30 минут',
       );
-      
+
       // Здесь можно запланировать отложенное уведомление
       // Пока просто логируем
-      log.i('Отложенное напоминание запланировано на ${reminderTime.toString()}');
+      log.i(
+        'Отложенное напоминание запланировано на ${reminderTime.toString()}',
+      );
     } catch (e) {
       log.e('Ошибка при обработке "Напомнить позже": $e');
     }
@@ -346,7 +340,7 @@ class NotificationService {
 
       // Отменяем ВСЕ старые уведомления для этого будильника
       await cancelAlarmNotifications(alarmId);
-      
+
       // Дополнительная очистка - отменяем все уведомления
       await _notifications.cancelAll();
 
@@ -383,8 +377,10 @@ class NotificationService {
     required List<int> daysOfWeek,
   }) async {
     try {
-      log.i('Создаем уведомление с логотипом и кнопками для будильника $alarmId');
-      
+      log.i(
+        'Создаем уведомление с логотипом и кнопками для будильника $alarmId',
+      );
+
       final androidDetails = AndroidNotificationDetails(
         'alarm_channel',
         'Будильники',
@@ -393,8 +389,11 @@ class NotificationService {
         priority: Priority.high,
         playSound: true,
         enableVibration: true,
-        icon: '@drawable/ic_notification_health', // Медицинская иконка для статус-бара
-        largeIcon: DrawableResourceAndroidBitmap('@mipmap/ic_launcher'), // Полноцветный логотип
+        icon:
+            '@drawable/ic_notification_health', // Медицинская иконка для статус-бара
+        largeIcon: DrawableResourceAndroidBitmap(
+          '@mipmap/ic_launcher',
+        ), // Полноцветный логотип
         actions: [
           AndroidNotificationAction(
             'accept',
@@ -440,8 +439,10 @@ class NotificationService {
           payload: 'alarm_$alarmId',
         );
       }
-      
-      log.i('Уведомление с логотипом и кнопками создано для будильника $alarmId');
+
+      log.i(
+        'Уведомление с логотипом и кнопками создано для будильника $alarmId',
+      );
     } catch (e) {
       log.e('Критическая ошибка создания уведомления: $e');
       rethrow;
@@ -459,7 +460,7 @@ class NotificationService {
   }) async {
     try {
       log.w('Создаем базовое уведомление для будильника $alarmId');
-      
+
       const androidDetails = AndroidNotificationDetails(
         'alarm_channel',
         'Будильники',
@@ -498,7 +499,7 @@ class NotificationService {
           payload: 'alarm_$alarmId',
         );
       }
-      
+
       log.i('Базовое уведомление создано для будильника $alarmId');
     } catch (e) {
       log.e('Критическая ошибка создания базового уведомления: $e');
@@ -576,8 +577,11 @@ class NotificationService {
       channelDescription: 'Тестовые уведомления',
       importance: Importance.high,
       priority: Priority.high,
-      icon: '@drawable/ic_notification_health', // Медицинская иконка для статус-бара
-      largeIcon: DrawableResourceAndroidBitmap('@mipmap/ic_launcher'), // Полноцветный логотип
+      icon:
+          '@drawable/ic_notification_health', // Медицинская иконка для статус-бара
+      largeIcon: DrawableResourceAndroidBitmap(
+        '@mipmap/ic_launcher',
+      ), // Полноцветный логотип
     );
 
     const iosDetails = DarwinNotificationDetails(
@@ -616,8 +620,11 @@ class NotificationService {
         priority: Priority.high,
         playSound: true,
         enableVibration: true,
-        icon: '@drawable/ic_notification_health', // Медицинская иконка для статус-бара
-        largeIcon: DrawableResourceAndroidBitmap('@mipmap/ic_launcher'), // Полноцветный логотип
+        icon:
+            '@drawable/ic_notification_health', // Медицинская иконка для статус-бара
+        largeIcon: DrawableResourceAndroidBitmap(
+          '@mipmap/ic_launcher',
+        ), // Полноцветный логотип
         actions: [
           AndroidNotificationAction(
             'accept',
@@ -654,7 +661,7 @@ class NotificationService {
         notificationDetails,
         payload: 'alarm_$alarmId',
       );
-      
+
       log.i('Тестовое уведомление с логотипом и кнопками показано');
     } catch (e) {
       log.e('Ошибка показа тестового уведомления: $e');

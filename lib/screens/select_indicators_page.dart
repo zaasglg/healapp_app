@@ -8,6 +8,7 @@ import '../config/app_config.dart';
 import '../utils/app_icons.dart';
 import '../repositories/patient_repository.dart';
 import '../repositories/diary_repository.dart';
+import '../utils/health_diary/indicator_utils.dart';
 import '../bloc/diary/diary_bloc.dart';
 import '../bloc/diary/diary_event.dart';
 import '../bloc/diary/diary_state.dart';
@@ -23,8 +24,38 @@ class SelectIndicatorsPage extends StatefulWidget {
 }
 
 class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
+  static const Map<String, String> _indicatorKeyMap = {
+    'Температура': 'temperature',
+    'Артериальное давление': 'blood_pressure',
+    'Частота дыхания': 'respiratory_rate',
+    'Уровень боли': 'pain_level',
+    'Сатурация': 'oxygen_saturation',
+    'Уровень сахара в крови': 'blood_sugar',
+    'Прогулка': 'walk',
+    'Когнитивные игры': 'cognitive_games',
+    'Смена подгузников': 'diaper_change',
+    'Гигиена': 'hygiene',
+    'Увлажнение кожи': 'skin_moisturizing',
+    'Прием пищи': 'meal',
+    'Прием лекарств': 'medication',
+    'Прием витаминов': 'vitamins',
+    'Сон': 'sleep',
+    'Выпито/выделено и цвет мочи': 'urine',
+    'Дефекация': 'defecation',
+    'Тошнота': 'nausea',
+    'Одышка': 'dyspnea',
+    'Кашель': 'cough',
+    'Икота': 'hiccup',
+    'Рвота': 'vomiting',
+    'Зуд': 'itching',
+    'Сухость во рту': 'dry_mouth',
+    'Нарушение вкуса': 'taste_disorder',
+  };
+
   final Set<String> _pinnedIndicators = {};
   final Set<String> _allIndicators = {};
+  final List<String> _systemCustomIndicators = [];
+  final DiaryRepository _diaryRepository = DiaryRepository();
   bool _isLoading = false;
   bool _isInitialLoading = true;
 
@@ -33,6 +64,7 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
     super.initState();
     // Убрана искусственная задержка для быстрой загрузки
     _isInitialLoading = false;
+    _loadSystemCustomIndicators();
   }
 
   Patient? get _patient => widget.patient;
@@ -46,6 +78,7 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
             'Чтобы закрепить параметры которые важно не забывать отслеживать - нажмите на него и нажмите на кнопку выбрать, доступно не более 3 параметров',
         maxSelection: 3,
         selectedIndicators: _pinnedIndicators,
+        systemIndicators: _systemCustomIndicators,
         onSelectionChanged: (selected) {
           setState(() {
             _pinnedIndicators.clear();
@@ -67,6 +100,7 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
         selectedIndicators: _allIndicators,
         blockedIndicators:
             _pinnedIndicators, // Блокируем показатели, выбранные в закрепленных
+        systemIndicators: _systemCustomIndicators,
         onSelectionChanged: (selected) {
           setState(() {
             _allIndicators.clear();
@@ -79,34 +113,67 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
 
   /// Преобразовать название индикатора в ключ API
   String _indicatorToKey(String indicator) {
-    final Map<String, String> mapping = {
-      'Температура': 'temperature',
-      'Артериальное давление': 'blood_pressure',
-      'Частота дыхания': 'respiratory_rate',
-      'Уровень боли': 'pain_level',
-      'Сатурация': 'oxygen_saturation',
-      'Уровень сахара в крови': 'blood_sugar',
-      'Прогулка': 'walk',
-      'Когнитивные игры': 'cognitive_games',
-      'Смена подгузников': 'diaper_change',
-      'Гигиена': 'hygiene',
-      'Увлажнение кожи': 'skin_moisturizing',
-      'Прием пищи': 'meal',
-      'Прием лекарств': 'medication',
-      'Прием витаминов': 'vitamins',
-      'Сон': 'sleep',
-      'Выпито/выделено и цвет мочи': 'urine',
-      'Дефекация': 'defecation',
-      'Тошнота': 'nausea',
-      'Одышка': 'dyspnea',
-      'Кашель': 'cough',
-      'Икота': 'hiccup',
-      'Рвота': 'vomiting',
-      'Зуд': 'itching',
-      'Сухость во рту': 'dry_mouth',
-      'Нарушение вкуса': 'taste_disorder',
-    };
-    return mapping[indicator] ?? indicator.toLowerCase().replaceAll(' ', '_');
+    return _indicatorKeyMap[indicator] ??
+        indicator.toLowerCase().replaceAll(' ', '_');
+  }
+
+  List<String> _normalizeIndicatorKeys(dynamic rawIndicators) {
+    if (rawIndicators == null) return [];
+
+    if (rawIndicators is List) {
+      return rawIndicators
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+
+    if (rawIndicators is String) {
+      final cleaned = rawIndicators.replaceAll('[', '').replaceAll(']', '');
+      return cleaned
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+
+    return [];
+  }
+
+  Future<void> _loadSystemCustomIndicators() async {
+    if (_patient == null) return;
+
+    try {
+      final diary = await _diaryRepository.getDiaryByPatientId(_patient!.id);
+      if (diary == null) return;
+
+      final indicatorKeys = _normalizeIndicatorKeys(
+        diary.settings?['all_indicators'] ?? diary.settings?['allIndicators'],
+      );
+      if (indicatorKeys.isEmpty) return;
+
+      final baseKeys = _indicatorKeyMap.values.toSet();
+      final customKeys = indicatorKeys
+          .where((key) => !baseKeys.contains(key))
+          .toSet();
+
+      if (customKeys.isEmpty) return;
+
+      final labels = customKeys
+          .map(getIndicatorLabel)
+          .where((label) => label.isNotEmpty)
+          .toSet()
+          .toList();
+
+      if (labels.isEmpty) return;
+
+      if (mounted) {
+        setState(() {
+          _systemCustomIndicators
+            ..clear()
+            ..addAll(labels);
+        });
+      }
+    } catch (_) {}
   }
 
   void _createDiary(BuildContext blocContext) {
@@ -122,10 +189,27 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
       return;
     }
 
+    // Проверяем, что выбран хотя бы один индикатор
+    if (_pinnedIndicators.isEmpty && _allIndicators.isEmpty) {
+      toastification.show(
+        context: context,
+        type: ToastificationType.warning,
+        style: ToastificationStyle.fillColored,
+        title: const Text('Внимание'),
+        description: const Text(
+          'Выберите хотя бы один показатель для дневника',
+        ),
+        autoCloseDuration: const Duration(seconds: 3),
+      );
+      return;
+    }
+
     // Логируем patient_id
     debugPrint(
       '🔍 Создание дневника для пациента: ${_patient!.fullName}, ID: ${_patient!.id}',
     );
+    debugPrint('📌 Закрепленные индикаторы: $_pinnedIndicators');
+    debugPrint('📋 Все индикаторы: $_allIndicators');
 
     // Преобразуем выбранные индикаторы в PinnedParameter
     final pinnedParameters = _pinnedIndicators.map((indicator) {
@@ -135,23 +219,58 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
       );
     }).toList();
 
+    // Формируем settings: объединяем все индикаторы (закрепленные + остальные)
+    final allIndicatorKeys = {
+      ..._pinnedIndicators.map(_indicatorToKey),
+      ..._allIndicators.map(_indicatorToKey),
+    }.toList();
+
     setState(() => _isLoading = true);
+
+    // Устанавливаем таймаут для безопасности (15 секунд)
+    Future.delayed(const Duration(seconds: 15), () {
+      if (mounted && _isLoading) {
+        debugPrint('⏱️ Таймаут создания дневника (15 сек)');
+        setState(() => _isLoading = false);
+        toastification.show(
+          context: context,
+          type: ToastificationType.error,
+          style: ToastificationStyle.fillColored,
+          title: const Text('Таймаут'),
+          description: const Text(
+            'Сервер не отвечает. Проверьте интернет-соединение и попробуйте снова',
+          ),
+          autoCloseDuration: const Duration(seconds: 4),
+        );
+      }
+    });
 
     // Создаём дневник через BLoC
     blocContext.read<DiaryBloc>().add(
       CreateDiary(
         patientId: _patient!.id,
         pinnedParameters: pinnedParameters,
-        settings: _allIndicators.isNotEmpty
-            ? {'all_indicators': _allIndicators.map(_indicatorToKey).toList()}
+        settings: allIndicatorKeys.isNotEmpty
+            ? {'all_indicators': allIndicatorKeys}
             : null,
       ),
     );
   }
 
   void _handleDiaryState(BuildContext context, DiaryState state) {
-    if (state is DiaryCreatedState) {
+    debugPrint('🔔 Получено состояние: ${state.runtimeType}');
+
+    if (state is DiaryLoading) {
+      debugPrint('⏳ Загрузка...');
+      // Убедимся, что состояние загрузки установлено
+      if (!_isLoading) {
+        setState(() => _isLoading = true);
+      }
+    } else if (state is DiaryCreatedState) {
       setState(() => _isLoading = false);
+      debugPrint(
+        '✅ Дневник создан: ID=${state.diary.id}, patientId=${state.diary.patientId}',
+      );
       toastification.show(
         context: context,
         type: ToastificationType.success,
@@ -166,6 +285,9 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
       );
     } else if (state is DiaryConflict) {
       setState(() => _isLoading = false);
+      debugPrint(
+        '⚠️ Конфликт: дневник уже существует (ID=${state.existingDiaryId})',
+      );
       toastification.show(
         context: context,
         type: ToastificationType.warning,
@@ -180,9 +302,14 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
         context.pushReplacement(
           '/health-diary/${state.existingDiaryId}/${_patient!.id}',
         );
+      } else {
+        debugPrint(
+          '❌ Ошибка: пациент не определен при переходе к существующему дневнику',
+        );
       }
     } else if (state is DiaryError) {
       setState(() => _isLoading = false);
+      debugPrint('❌ Ошибка создания дневника: ${state.message}');
       toastification.show(
         context: context,
         type: ToastificationType.error,
@@ -191,6 +318,12 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
         description: Text(state.message),
         autoCloseDuration: const Duration(seconds: 3),
       );
+    } else if (state is DiaryInitial || state is DiariesLoaded) {
+      // Сбрасываем загрузку для любого другого состояния
+      if (_isLoading) {
+        debugPrint('🔄 Сброс состояния загрузки для ${state.runtimeType}');
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -499,6 +632,7 @@ class _IndicatorsSelectionDialog extends StatefulWidget {
   final Set<String> selectedIndicators;
   final Set<String>?
   blockedIndicators; // Заблокированные показатели (из закрепленных)
+  final List<String> systemIndicators;
   final Function(Set<String>) onSelectionChanged;
 
   const _IndicatorsSelectionDialog({
@@ -507,6 +641,7 @@ class _IndicatorsSelectionDialog extends StatefulWidget {
     this.maxSelection,
     required this.selectedIndicators,
     this.blockedIndicators,
+    this.systemIndicators = const [],
     required this.onSelectionChanged,
   });
 
@@ -526,12 +661,14 @@ class _IndicatorsSelectionDialogState
       TextEditingController();
   final TextEditingController _symptomCustomController =
       TextEditingController();
+  final TextEditingController _systemCustomController = TextEditingController();
 
   // Кастомные показатели для каждой категории
   final Set<String> _customCareIndicators = {};
   final Set<String> _customPhysicalIndicators = {};
   final Set<String> _customExcretionIndicators = {};
   final Set<String> _customSymptomIndicators = {};
+  final Set<String> _customSystemIndicators = {};
 
   @override
   void dispose() {
@@ -539,6 +676,7 @@ class _IndicatorsSelectionDialogState
     _physicalCustomController.dispose();
     _excretionCustomController.dispose();
     _symptomCustomController.dispose();
+    _systemCustomController.dispose();
     super.dispose();
   }
 
@@ -1000,6 +1138,14 @@ class _IndicatorsSelectionDialogState
                       _symptomCustomController,
                       _customSymptomIndicators,
                     ),
+                    if (widget.systemIndicators.isNotEmpty) ...[
+                      _buildIndicatorSection(
+                        'Дополнительные показатели',
+                        widget.systemIndicators,
+                        _systemCustomController,
+                        _customSystemIndicators,
+                      ),
+                    ],
                   ],
                 ),
               ),

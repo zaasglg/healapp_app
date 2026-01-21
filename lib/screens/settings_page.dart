@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -17,6 +16,7 @@ import '../bloc/organization/organization_bloc.dart';
 import '../bloc/organization/organization_event.dart';
 import '../bloc/organization/organization_state.dart';
 import '../core/network/api_client.dart';
+import '../repositories/auth_repository.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -45,6 +45,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   bool _isInitialized = false;
   String? _previousAvatarUrl;
+  User? _cachedUser;
 
   // Список городов России (основные города)
   static const List<String> _russianCities = [
@@ -148,10 +149,12 @@ class _SettingsPageState extends State<SettingsPage> {
       final authState = context.read<AuthBloc>().state;
       if (authState is AuthAuthenticated) {
         _previousAvatarUrl = authState.user.avatar;
+        _cachedUser = authState.user;
 
         // Инициализируем форму для сиделки или клиента из данных пользователя
         if (authState.user.accountType == 'specialist' ||
-            authState.user.accountType == 'client') {
+            authState.user.accountType == 'doctor' ||
+            authState.user.accountType == 'caregiver') {
           _firstNameController.text = authState.user.firstName ?? '';
           _lastNameController.text = authState.user.lastName ?? '';
           final currentCity =
@@ -160,6 +163,14 @@ class _SettingsPageState extends State<SettingsPage> {
           if (currentCity.isNotEmpty && _russianCities.contains(currentCity)) {
             _selectedCity = currentCity;
           }
+          _isInitialized = true;
+        } else if ((authState.user.accountType == 'pansionat' ||
+                authState.user.accountType == 'agency') &&
+            (authState.user.firstName != null ||
+                authState.user.lastName != null)) {
+          // Для пансионата с именем и фамилией показываем персональные поля
+          _firstNameController.text = authState.user.firstName ?? '';
+          _lastNameController.text = authState.user.lastName ?? '';
           _isInitialized = true;
         } else {
           // Загружаем данные организации только для организаций (не для specialist/client)
@@ -241,8 +252,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
       if (image != null) {
         // Проверяем размер файла (максимум 5MB)
-        final file = File(image.path);
-        final fileSizeInBytes = await file.length();
+        // Для веба используем readAsBytes(), для мобильных - File
+        final fileSizeInBytes = await image.length();
         const maxSizeInBytes = 5 * 1024 * 1024; // 5MB
 
         if (fileSizeInBytes > maxSizeInBytes) {
@@ -517,9 +528,8 @@ class _SettingsPageState extends State<SettingsPage> {
       listeners: [
         BlocListener<AuthBloc, AuthState>(
           listener: (context, state) {
-            if (state is AuthUnauthenticated) {
-              context.go('/login');
-            } else if (state is AuthAuthenticated) {
+            if (state is AuthAuthenticated) {
+              _cachedUser = state.user;
               // Проверяем, изменился ли аватар
               final currentAvatarUrl = state.user.avatar;
               if (_previousAvatarUrl != currentAvatarUrl &&
@@ -539,6 +549,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 );
               }
               _previousAvatarUrl = currentAvatarUrl;
+            } else if (state is AuthUnauthenticated) {
+              _cachedUser = null;
+              context.go('/login');
             } else if (state is AuthFailure) {
               toastification.show(
                 context: context,
@@ -590,9 +603,10 @@ class _SettingsPageState extends State<SettingsPage> {
       ],
       child: BlocBuilder<AuthBloc, AuthState>(
         builder: (context, authState) {
-          final accountType = authState is AuthAuthenticated
-              ? authState.user.accountType
-              : null;
+          final effectiveUser = authState is AuthAuthenticated
+              ? authState.user
+              : _cachedUser;
+          final accountType = effectiveUser?.accountType;
 
           return Scaffold(
             backgroundColor: const Color(0xFFF7F7F8),
@@ -633,14 +647,38 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Center(
-                      child: Text(
-                        _getAccountTypeLabel(accountType),
-                        style: GoogleFonts.firaSans(
-                          fontSize: 14,
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
+                    BlocBuilder<AuthBloc, AuthState>(
+                      builder: (context, authState) {
+                        final user = authState is AuthAuthenticated
+                            ? authState.user
+                            : _cachedUser;
+                        String roleLabel = _getAccountTypeLabel(accountType);
+
+                        // Если пользователь авторизован, показываем его роль
+                        if (user != null) {
+                          if (user.hasRole('caregiver')) {
+                            roleLabel = 'Сиделка';
+                          } else if (user.hasRole('doctor')) {
+                            roleLabel = 'Врач';
+                          } else if (user.hasRole('admin')) {
+                            roleLabel = 'Администратор';
+                          } else if (user.accountType == 'specialist') {
+                            roleLabel = 'Частная сиделка';
+                          } else if (user.accountType == 'client') {
+                            roleLabel = 'Клиент';
+                          }
+                        }
+
+                        return Center(
+                          child: Text(
+                            roleLabel,
+                            style: GoogleFonts.firaSans(
+                              fontSize: 14,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                     const SizedBox(height: 12),
 
@@ -673,10 +711,10 @@ class _SettingsPageState extends State<SettingsPage> {
                               children: [
                                 BlocBuilder<AuthBloc, AuthState>(
                                   builder: (context, authState) {
-                                    String? avatarUrl;
-                                    if (authState is AuthAuthenticated) {
-                                      avatarUrl = authState.user.avatar;
-                                    }
+                                    final user = authState is AuthAuthenticated
+                                        ? authState.user
+                                        : _cachedUser;
+                                    final avatarUrl = user?.avatar;
 
                                     return Center(
                                       child: Column(
@@ -706,17 +744,24 @@ class _SettingsPageState extends State<SettingsPage> {
                                 // Форма зависит от типа аккаунта
                                 BlocBuilder<AuthBloc, AuthState>(
                                   builder: (context, authState) {
+                                    final user = authState is AuthAuthenticated
+                                        ? authState.user
+                                        : _cachedUser;
+                                    final accountType = user?.accountType;
+
+                                    // Проверяем, является ли это персональным аккаунтом
+                                    // Для пансионата проверяем наличие имени или фамилии
                                     final isPersonalAccount =
-                                        authState is AuthAuthenticated &&
-                                        (authState.user.accountType ==
-                                                'specialist' ||
-                                            authState.user.accountType ==
-                                                'client');
+                                        accountType == 'specialist' ||
+                                        accountType == 'doctor' ||
+                                        accountType == 'caregiver' ||
+                                        accountType == 'agency' ||
+                                        (accountType == 'pansionat' &&
+                                            (user?.firstName != null ||
+                                                user?.lastName != null));
 
                                     final isSpecialist =
-                                        authState is AuthAuthenticated &&
-                                        authState.user.accountType ==
-                                            'specialist';
+                                        accountType == 'specialist';
 
                                     if (isPersonalAccount) {
                                       // Форма для частной сиделки или клиента

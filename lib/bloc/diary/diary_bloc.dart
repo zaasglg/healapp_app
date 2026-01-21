@@ -15,8 +15,9 @@ class DiaryBloc extends Bloc<DiaryEvent, DiaryState> {
     DiaryRepository? diaryRepository,
     PinnedNotificationService? pinnedNotificationService,
   }) : _diaryRepository = diaryRepository ?? DiaryRepository(),
-        _pinnedNotificationService = pinnedNotificationService ?? PinnedNotificationService(),
-        super(const DiaryInitial()) {
+       _pinnedNotificationService =
+           pinnedNotificationService ?? PinnedNotificationService(),
+       super(const DiaryInitial()) {
     on<LoadDiaries>(_onLoadDiaries);
     on<CreateDiary>(_onCreateDiary);
     on<LoadDiary>(_onLoadDiary);
@@ -40,8 +41,14 @@ class DiaryBloc extends Bloc<DiaryEvent, DiaryState> {
 
     try {
       final diaries = await _diaryRepository.getDiaries();
-      log.i('Загружено ${diaries.length} дневников');
-      emit(DiariesLoaded(diaries));
+      // Фильтруем дневники - показываем только те, у которых есть пациент
+      final diariesWithPatients = diaries
+          .where((diary) => diary.patient != null)
+          .toList();
+      log.i(
+        'Загружено ${diaries.length} дневников, показываем ${diariesWithPatients.length} (с пациентами)',
+      );
+      emit(DiariesLoaded(diariesWithPatients));
     } on UnauthorizedException {
       emit(const DiaryError('Требуется авторизация'));
     } on NetworkException catch (e) {
@@ -63,6 +70,10 @@ class DiaryBloc extends Bloc<DiaryEvent, DiaryState> {
 
     try {
       log.d('Создание дневника для пациента: ${event.patientId}');
+      log.d(
+        'Закрепленные параметры: ${event.pinnedParameters?.map((p) => p.key).toList() ?? []}',
+      );
+      log.d('Settings: ${event.settings}');
 
       final result = await _diaryRepository.createDiary(
         patientId: event.patientId,
@@ -72,35 +83,57 @@ class DiaryBloc extends Bloc<DiaryEvent, DiaryState> {
 
       switch (result) {
         case DiaryCreated(:final diary):
-          log.i('Дневник создан: ${diary.id}');
-          
-          // Планируем уведомления для закрепленных параметров
-          if (diary.pinnedParameters.isNotEmpty) {
-            await _pinnedNotificationService.schedulePinnedParameterNotifications(
-              patientId: diary.patientId,
-              pinnedParameters: diary.pinnedParameters,
-            );
-          }
-          
+          log.i(
+            '✅ Дневник создан успешно: ID=${diary.id}, patientId=${diary.patientId}',
+          );
+
+          // СНАЧАЛА отправляем состояние успеха
           emit(DiaryCreatedState(diary));
+
+          // ПОТОМ планируем уведомления асинхронно (без await в основном потоке)
+          if (diary.pinnedParameters.isNotEmpty) {
+            log.d(
+              '🔔 Запуск фоновой задачи планирования уведомлений для ${diary.pinnedParameters.length} параметров',
+            );
+            // Запускаем в фоне, не блокируя UI
+            _pinnedNotificationService
+                .schedulePinnedParameterNotifications(
+                  patientId: diary.patientId,
+                  pinnedParameters: diary.pinnedParameters,
+                )
+                .then((_) {
+                  log.d('✅ Уведомления успешно запланированы');
+                })
+                .catchError((notificationError) {
+                  // Логируем ошибку планирования уведомлений
+                  log.w(
+                    '⚠️ Ошибка планирования уведомлений: $notificationError',
+                  );
+                });
+          }
         case DiaryAlreadyExists(:final message, :final existingDiaryId):
-          log.w('Дневник уже существует: $existingDiaryId');
+          log.w('⚠️ Дневник уже существует: $existingDiaryId');
           emit(DiaryConflict(message, existingDiaryId));
       }
     } on ValidationException catch (e) {
-      log.w('Ошибка валидации: ${e.getAllErrors()}');
+      log.w('❌ Ошибка валидации: ${e.getAllErrors()}');
       emit(DiaryError(e.getAllErrors().join(', ')));
     } on UnauthorizedException {
+      log.w('❌ Требуется авторизация');
       emit(const DiaryError('Требуется авторизация'));
     } on NetworkException catch (e) {
+      log.e('❌ Ошибка сети: ${e.message}');
       emit(DiaryError('Ошибка сети: ${e.message}'));
     } on ServerException catch (e) {
+      log.e('❌ Ошибка сервера: ${e.message}');
       emit(DiaryError('Ошибка сервера: ${e.message}'));
     } on ApiException catch (e) {
+      log.e('❌ API ошибка: ${e.message}');
       emit(DiaryError(e.message));
-    } catch (e) {
-      log.e('Ошибка создания дневника: $e');
-      emit(const DiaryError('Неизвестная ошибка'));
+    } catch (e, stackTrace) {
+      log.e('❌ Неизвестная ошибка создания дневника: $e');
+      log.e('StackTrace: $stackTrace');
+      emit(DiaryError('Неизвестная ошибка: ${e.toString()}'));
     }
   }
 
@@ -320,7 +353,9 @@ class DiaryBloc extends Bloc<DiaryEvent, DiaryState> {
         emit(DiaryParametersUpdated(updatedDiary));
       } else {
         // Загружаем дневник и эмитим DiaryParametersUpdated
-        final diary = await _diaryRepository.getDiaryByPatientId(event.patientId);
+        final diary = await _diaryRepository.getDiaryByPatientId(
+          event.patientId,
+        );
         if (diary != null) {
           emit(DiaryParametersUpdated(diary));
         } else {
@@ -360,9 +395,26 @@ class DiaryBloc extends Bloc<DiaryEvent, DiaryState> {
         // Создаём обновлённый список записей с новой записью в начале
         final updatedEntries = [newEntry, ...currentDiary.entries];
 
-        // Создаём копию дневника с обновлёнными записями
+        // Обновляем lastRecordedAt для закрепленного параметра, если это он
+        final updatedPinnedParameters = currentDiary.pinnedParameters.map((
+          param,
+        ) {
+          if (param.key == event.key) {
+            return PinnedParameter(
+              key: param.key,
+              intervalMinutes: param.intervalMinutes,
+              times: param.times,
+              settings: param.settings,
+              lastRecordedAt: event.recordedAt,
+            );
+          }
+          return param;
+        }).toList();
+
+        // Создаём копию дневника с обновлёнными записями и параметрами
         final updatedDiary = currentDiary.copyWith(
           entries: updatedEntries,
+          pinnedParameters: updatedPinnedParameters,
           updatedAt: DateTime.now(),
         );
 

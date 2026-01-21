@@ -6,12 +6,14 @@ import 'notification_service.dart';
 
 /// Сервис для управления уведомлениями закрепленных параметров
 class PinnedNotificationService {
-  static final PinnedNotificationService _instance = PinnedNotificationService._internal();
+  static final PinnedNotificationService _instance =
+      PinnedNotificationService._internal();
   factory PinnedNotificationService() => _instance;
   PinnedNotificationService._internal();
 
   final NotificationService _notificationService = NotificationService();
-  final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
+  final FlutterLocalNotificationsPlugin _notifications =
+      FlutterLocalNotificationsPlugin();
 
   /// Планирование уведомлений для всех закрепленных параметров
   Future<void> schedulePinnedParameterNotifications({
@@ -33,7 +35,9 @@ class PinnedNotificationService {
         );
       }
 
-      log.i('Уведомления запланированы для ${pinnedParameters.length} закрепленных параметров пациента $patientId');
+      log.i(
+        'Уведомления запланированы для ${pinnedParameters.length} закрепленных параметров пациента $patientId',
+      );
     } catch (e) {
       log.e('Ошибка планирования уведомлений для закрепленных параметров: $e');
     }
@@ -60,7 +64,9 @@ class PinnedNotificationService {
         );
       }
     } catch (e) {
-      log.e('Ошибка планирования уведомлений для параметра ${parameter.key}: $e');
+      log.e(
+        'Ошибка планирования уведомлений для параметра ${parameter.key}: $e',
+      );
     }
   }
 
@@ -72,17 +78,21 @@ class PinnedNotificationService {
     for (int timeIndex = 0; timeIndex < parameter.times.length; timeIndex++) {
       final timeStr = parameter.times[timeIndex];
       final timeParts = timeStr.split(':');
-      
+
       if (timeParts.length != 2) continue;
-      
+
       final hour = int.tryParse(timeParts[0]);
       final minute = int.tryParse(timeParts[1]);
-      
+
       if (hour == null || minute == null) continue;
 
       // Создаем уникальный ID для уведомления
-      final notificationId = _generateNotificationId(patientId, parameter.key, timeIndex);
-      
+      final notificationId = _generateNotificationId(
+        patientId,
+        parameter.key,
+        timeIndex,
+      );
+
       final title = 'Время измерить ${parameter.label}';
       final body = 'Не забудьте измерить ${parameter.label.toLowerCase()}';
 
@@ -111,11 +121,17 @@ class PinnedNotificationService {
     int currentHour = 8; // Начинаем с 8 утра
     int timeIndex = 0;
 
-    while (currentHour < 22) { // До 22:00
-      final notificationId = _generateNotificationId(patientId, parameter.key, timeIndex);
-      
+    while (currentHour < 22) {
+      // До 22:00
+      final notificationId = _generateNotificationId(
+        patientId,
+        parameter.key,
+        timeIndex,
+      );
+
       final title = 'Время измерить ${parameter.label}';
-      final body = 'Напоминание: измерьте ${parameter.label.toLowerCase()} (${parameter.intervalLabel})';
+      final body =
+          'Напоминание: измерьте ${parameter.label.toLowerCase()} (${parameter.intervalLabel})';
 
       await _scheduleParameterNotification(
         notificationId: notificationId,
@@ -196,7 +212,9 @@ class PinnedNotificationService {
         payload: 'pinned_${patientId}_${parameter.key}',
       );
 
-      log.d('Уведомление запланировано для ${parameter.key} в $hour:${minute.toString().padLeft(2, '0')}');
+      log.d(
+        'Уведомление запланировано для ${parameter.key} в $hour:${minute.toString().padLeft(2, '0')}',
+      );
     } catch (e) {
       log.e('Ошибка планирования уведомления для ${parameter.key}: $e');
     }
@@ -210,28 +228,43 @@ class PinnedNotificationService {
       for (int i = 0; i < 10000; i++) {
         await _notifications.cancel(baseId + i);
       }
-      log.i('Уведомления отменены для закрепленных параметров пациента $patientId');
+      log.i(
+        'Уведомления отменены для закрепленных параметров пациента $patientId',
+      );
     } catch (e) {
       log.e('Ошибка отмены уведомлений: $e');
     }
   }
 
   /// Отмена уведомлений для конкретного параметра
-  Future<void> cancelParameterNotifications(int patientId, String parameterKey) async {
+  Future<void> cancelParameterNotifications(
+    int patientId,
+    String parameterKey,
+  ) async {
     try {
       // Отменяем все возможные уведомления для этого параметра
       for (int timeIndex = 0; timeIndex < 24; timeIndex++) {
-        final notificationId = _generateNotificationId(patientId, parameterKey, timeIndex);
+        final notificationId = _generateNotificationId(
+          patientId,
+          parameterKey,
+          timeIndex,
+        );
         await _notifications.cancel(notificationId);
       }
-      log.i('Уведомления отменены для параметра $parameterKey пациента $patientId');
+      log.i(
+        'Уведомления отменены для параметра $parameterKey пациента $patientId',
+      );
     } catch (e) {
       log.e('Ошибка отмены уведомлений для параметра: $e');
     }
   }
 
   /// Генерация уникального ID для уведомления
-  int _generateNotificationId(int patientId, String parameterKey, int timeIndex) {
+  int _generateNotificationId(
+    int patientId,
+    String parameterKey,
+    int timeIndex,
+  ) {
     // Создаем уникальный ID на основе patientId, parameterKey и timeIndex
     final keyHash = parameterKey.hashCode.abs() % 1000;
     return patientId * 100000 + keyHash * 100 + timeIndex;
@@ -305,7 +338,8 @@ class PinnedNotificationService {
       );
 
       final title = 'Время измерить ${parameter.label}';
-      final body = 'Тестовое напоминание: измерьте ${parameter.label.toLowerCase()}';
+      final body =
+          'Тестовое напоминание: измерьте ${parameter.label.toLowerCase()}';
 
       await _notifications.show(
         DateTime.now().millisecondsSinceEpoch ~/ 1000,
@@ -314,7 +348,7 @@ class PinnedNotificationService {
         notificationDetails,
         payload: 'pinned_${patientId}_${parameter.key}',
       );
-      
+
       log.i('Тестовое уведомление показано для параметра ${parameter.key}');
     } catch (e) {
       log.e('Ошибка показа тестового уведомления: $e');
@@ -328,7 +362,7 @@ class PinnedNotificationService {
   }) async {
     // Отменяем старые уведомления
     await cancelPinnedParameterNotifications(patientId);
-    
+
     // Планируем новые уведомления
     await schedulePinnedParameterNotifications(
       patientId: patientId,

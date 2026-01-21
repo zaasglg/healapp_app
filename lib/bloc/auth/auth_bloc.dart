@@ -20,6 +20,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     log.d('AuthLogoutRequested, AuthCheckStatus, AuthRefreshUser');
 
     on<AuthLoginRequested>(_onLoginRequested);
+    on<AuthLoginWithToken>(_onLoginWithToken);
     on<AuthRegisterRequested>(_onRegisterRequested);
     on<AuthVerifyPhoneRequested>(_onVerifyPhoneRequested);
     on<AuthLogoutRequested>(_onLogoutRequested);
@@ -50,6 +51,34 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       emit(AuthFailure(errorMessage));
     } on UnauthorizedException {
       emit(const AuthFailure('Неверный номер телефона или пароль'));
+    } on NetworkException catch (e) {
+      emit(AuthFailure('Ошибка сети: ${e.message}'));
+    } on ServerException catch (e) {
+      emit(AuthFailure('Ошибка сервера: ${e.message}'));
+    } on ApiException catch (e) {
+      emit(AuthFailure(e.message));
+    } catch (_) {
+      emit(const AuthFailure('Неизвестная ошибка'));
+    }
+  }
+
+  /// Обработка события входа по токену
+  Future<void> _onLoginWithToken(
+    AuthLoginWithToken event,
+    Emitter<AuthState> emit,
+  ) async {
+    emit(const AuthLoading());
+
+    try {
+      final user = await _authRepository.loginWithToken(event.token);
+      emit(AuthAuthenticated(user));
+    } on ValidationException catch (e) {
+      final errorMessage = e.getAllErrors().isNotEmpty
+          ? e.getAllErrors().join(', ')
+          : e.message;
+      emit(AuthFailure(errorMessage));
+    } on UnauthorizedException {
+      emit(const AuthFailure('Неверный токен авторизации'));
     } on NetworkException catch (e) {
       emit(AuthFailure('Ошибка сети: ${e.message}'));
     } on ServerException catch (e) {

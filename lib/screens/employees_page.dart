@@ -119,7 +119,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
         child: BlocBuilder<OrganizationBloc, OrganizationState>(
           builder: (context, orgState) {
             final displayName = _getEmployeeDisplayName(employee, orgState);
-            
+
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -154,7 +154,10 @@ class _EmployeesPageState extends State<EmployeesPage> {
                 ],
                 if (employee.role != 'owner')
                   ListTile(
-                    leading: const Icon(Icons.delete_outline, color: Colors.red),
+                    leading: const Icon(
+                      Icons.delete_outline,
+                      color: Colors.red,
+                    ),
                     title: Text(
                       'Удалить из организации',
                       style: GoogleFonts.firaSans(color: Colors.red),
@@ -181,7 +184,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
       builder: (context) => BlocBuilder<OrganizationBloc, OrganizationState>(
         builder: (context, orgState) {
           final displayName = _getEmployeeDisplayName(employee, orgState);
-          
+
           return StatefulBuilder(
             builder: (context, setDialogState) => AlertDialog(
               backgroundColor: Colors.white,
@@ -256,10 +259,12 @@ class _EmployeesPageState extends State<EmployeesPage> {
       builder: (context) => BlocBuilder<OrganizationBloc, OrganizationState>(
         builder: (context, orgState) {
           final displayName = _getEmployeeDisplayName(employee, orgState);
-          
+
           return AlertDialog(
             backgroundColor: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
             title: Text(
               'Удалить сотрудника?',
               style: GoogleFonts.firaSans(fontWeight: FontWeight.w700),
@@ -650,7 +655,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
     // Формируем ссылку для приглашения (если inviteUrl пустой, создаем из токена)
     final String inviteLink =
         invitation.inviteUrl ??
-        'https://api.sistemizdorovya.ru/invite/${invitation.token}';
+        'https://сотрудники.системыздоровья.рф/invite/${invitation.token}';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -920,7 +925,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
           child: BlocBuilder<OrganizationBloc, OrganizationState>(
             builder: (context, orgState) {
               final displayName = _getEmployeeDisplayName(employee, orgState);
-              
+
               return Row(
                 children: [
                   _buildEmployeeAvatar(employee, orgState),
@@ -1009,7 +1014,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
   Widget _buildEmployeeAvatar(Employee employee, OrganizationState orgState) {
     // Логируем для отладки
     print('Employee avatar: ${employee.avatarUrl} for ${employee.fullName}');
-    
+
     return Container(
       width: 48,
       height: 48,
@@ -1044,7 +1049,9 @@ class _EmployeesPageState extends State<EmployeesPage> {
                   return Center(
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(_getRoleColor(employee.role)),
+                      valueColor: AlwaysStoppedAnimation(
+                        _getRoleColor(employee.role),
+                      ),
                     ),
                   );
                 },
@@ -1064,7 +1071,10 @@ class _EmployeesPageState extends State<EmployeesPage> {
   }
 
   /// Получить инициалы для сотрудника с учетом организации
-  String _getInitialsForEmployee(Employee employee, OrganizationState orgState) {
+  String _getInitialsForEmployee(
+    Employee employee,
+    OrganizationState orgState,
+  ) {
     // Для владельца используем инициалы организации, если у него нет имени
     if (employee.role == 'owner' && employee.fullName == 'Без имени') {
       if (orgState is OrganizationLoaded) {
@@ -1075,7 +1085,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
           if (words.length >= 2) {
             return '${words[0][0].toUpperCase()}${words[1][0].toUpperCase()}';
           } else if (words.isNotEmpty) {
-            return words[0].length >= 2 
+            return words[0].length >= 2
                 ? '${words[0][0].toUpperCase()}${words[0][1].toUpperCase()}'
                 : words[0][0].toUpperCase();
           }
@@ -1099,7 +1109,10 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
   /// Получить отображаемое имя сотрудника
   /// Для владельца без имени показываем название организации
-  String _getEmployeeDisplayName(Employee employee, OrganizationState orgState) {
+  String _getEmployeeDisplayName(
+    Employee employee,
+    OrganizationState orgState,
+  ) {
     // Если у сотрудника есть имя, используем его
     if (employee.fullName != 'Без имени') {
       return employee.fullName;

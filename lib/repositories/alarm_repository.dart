@@ -351,9 +351,7 @@ class AlarmRepository {
 
       await _apiClient.post<Map<String, dynamic>>(
         '/alarms/$alarmId/accept',
-        data: {
-          'timestamp': DateTime.now().toIso8601String(),
-        },
+        data: {'timestamp': DateTime.now().toIso8601String()},
       );
 
       log.i('Будильник отмечен как принятый');
@@ -370,9 +368,7 @@ class AlarmRepository {
 
       await _apiClient.post<Map<String, dynamic>>(
         '/alarms/$alarmId/decline',
-        data: {
-          'timestamp': DateTime.now().toIso8601String(),
-        },
+        data: {'timestamp': DateTime.now().toIso8601String()},
       );
 
       log.i('Будильник отмечен как отклоненный');

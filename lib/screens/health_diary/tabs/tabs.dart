@@ -1,5 +1,7 @@
-/// Экспорт всех табов для health_diary
-library;
+/// Экспортный файл для вкладок дневника здоровья
+///
+/// Позволяет импортировать все вкладки одним оператором:
+/// `import 'package:healapp_app/screens/health_diary/tabs/tabs.dart';`
 
 export 'alarm_tab.dart';
 export 'client_tab.dart';

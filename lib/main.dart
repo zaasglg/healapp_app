@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:toastification/toastification.dart';
@@ -50,7 +51,11 @@ void _navigateToInvite(String token) {
   });
 }
 
-void _tryNavigateToInvite(String token, {int attempt = 1, int maxAttempts = 5}) {
+void _tryNavigateToInvite(
+  String token, {
+  int attempt = 1,
+  int maxAttempts = 5,
+}) {
   try {
     appRouter.go('/invite/$token');
     log.i('Успешная навигация к invite странице');
@@ -59,7 +64,11 @@ void _tryNavigateToInvite(String token, {int attempt = 1, int maxAttempts = 5}) 
     if (attempt < maxAttempts) {
       // Повторная попытка с увеличивающейся задержкой
       Future.delayed(Duration(milliseconds: 300 * attempt), () {
-        _tryNavigateToInvite(token, attempt: attempt + 1, maxAttempts: maxAttempts);
+        _tryNavigateToInvite(
+          token,
+          attempt: attempt + 1,
+          maxAttempts: maxAttempts,
+        );
       });
     } else {
       log.e('Не удалось навигировать к invite после $maxAttempts попыток');
@@ -69,7 +78,7 @@ void _tryNavigateToInvite(String token, {int attempt = 1, int maxAttempts = 5}) 
 
 class MyApp extends StatefulWidget {
   final String? pendingInviteToken;
-  
+
   const MyApp({super.key, this.pendingInviteToken});
 
   @override
@@ -99,7 +108,54 @@ class _MyAppState extends State<MyApp> {
     return MultiBlocProvider(
       providers: [
         BlocProvider(
-          create: (context) => AuthBloc()..add(const AuthCheckStatus()),
+          create: (context) {
+            final authBloc = AuthBloc();
+
+            // Для Web версии: проверяем наличие токена в URL для авто-логина
+            if (kIsWeb) {
+              try {
+                // Uri.base содержит полный текущий URL в момент запуска
+                final uri = Uri.base;
+                log.i('🔍 Uri.base при запуске: $uri');
+                log.d('🔍 Uri.base.queryParameters: ${uri.queryParameters}');
+
+                String? token = uri.queryParameters['token'];
+
+                // Fallback: если в queryParameters пусто (из-за особенностей хэш-роутинга),
+                // пробуем распарсить строку URL вручную
+                if ((token == null || token.isEmpty) &&
+                    uri.toString().contains('token=')) {
+                  log.w(
+                    '⚠️ Токен не найден в queryParameters, пробуем regex...',
+                  );
+                  // Ищем token=... до следующего амперсанда или конца строки или решетки
+                  final match = RegExp(
+                    r'[?&]token=([^&#]+)',
+                  ).firstMatch(uri.toString());
+                  if (match != null) {
+                    final rawToken = match.group(1)!;
+                    // Декодируем (например, %7C -> |)
+                    token = Uri.decodeComponent(rawToken);
+                    log.i('✅ Токен найден через regex: $token');
+                  }
+                } else if (token != null) {
+                  log.i('✅ Токен найден в queryParameters: $token');
+                }
+
+                if (token != null && token.isNotEmpty) {
+                  log.i('📍 Web: Запуск авторизации по токену...');
+                  authBloc.add(AuthLoginWithToken(token));
+                  return authBloc;
+                } else {
+                  log.d('❌ Токен не найден ни одним способом');
+                }
+              } catch (e) {
+                log.e('🔥 Ошибка при получении токена из URL: $e');
+              }
+            }
+
+            return authBloc..add(const AuthCheckStatus());
+          },
         ),
         BlocProvider(
           create: (context) =>
@@ -120,6 +176,26 @@ class _MyAppState extends State<MyApp> {
           ],
           supportedLocales: const [Locale('ru', 'RU'), Locale('en', 'US')],
           locale: const Locale('ru', 'RU'),
+          builder: (context, child) {
+            if (kIsWeb && child != null) {
+              return Center(
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 500),
+                  decoration: BoxDecoration(
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.1),
+                        blurRadius: 20,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: child,
+                ),
+              );
+            }
+            return child ?? const SizedBox.shrink();
+          },
         ),
       ),
     );

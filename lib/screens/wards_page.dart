@@ -122,7 +122,9 @@ class _WardsPageContent extends StatelessWidget {
                   bool canCreateCard = true;
                   if (authState is AuthAuthenticated) {
                     // 'specialist' corresponds to "Частная сиделка"
-                    if (authState.user.accountType == 'specialist') {
+                    // 'employee' corresponds to "Сотрудник"
+                    if (authState.user.accountType == 'doctor' ||
+                        authState.user.accountType == 'caregiver') {
                       canCreateCard = false;
                     }
                   }

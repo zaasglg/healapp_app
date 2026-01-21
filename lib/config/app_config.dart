@@ -10,6 +10,10 @@ class AppConfig {
 
   // Пример других настроек
   static const String appName = 'HealApp';
+
+  // Ссылка на поддержку в WhatsApp
+  static const String supportWhatsappUrl =
+      'https://api.whatsapp.com/send/?phone=79145391376&text&type=phone_number&app_absent=0';
 }
 
 /// Тема приложения, основанная на значениях из [AppConfig].

@@ -27,8 +27,7 @@ class EditPinnedIndicatorsPage extends StatefulWidget {
       _EditPinnedIndicatorsPageState();
 }
 
-class _EditPinnedIndicatorsPageState
-    extends State<EditPinnedIndicatorsPage> {
+class _EditPinnedIndicatorsPageState extends State<EditPinnedIndicatorsPage> {
   final Map<String, int> _intervalMinutes = {};
   final Set<String> _selectedIndicators = {};
   bool _isLoading = false;
@@ -40,7 +39,9 @@ class _EditPinnedIndicatorsPageState
     // Инициализируем текущие показатели и их интервалы
     for (final param in widget.currentPinnedParameters) {
       _selectedIndicators.add(_keyToIndicator(param.key));
-      _intervalMinutes[param.key] = param.intervalMinutes < 1 ? 60 : param.intervalMinutes;
+      _intervalMinutes[param.key] = param.intervalMinutes < 1
+          ? 60
+          : param.intervalMinutes;
     }
     // Имитация начальной загрузки для smoother UX
     Future.delayed(const Duration(milliseconds: 500), () {
@@ -170,7 +171,9 @@ class _EditPinnedIndicatorsPageState
       final intervalMinutes = _intervalMinutes[key] ?? 60;
       return PinnedParameter(
         key: key,
-        intervalMinutes: intervalMinutes < 1 ? 60 : intervalMinutes, // Минимум 1 минута
+        intervalMinutes: intervalMinutes < 1
+            ? 60
+            : intervalMinutes, // Минимум 1 минута
       );
     }).toList();
 
@@ -178,11 +181,11 @@ class _EditPinnedIndicatorsPageState
 
     // Сохраняем через BLoC
     blocContext.read<DiaryBloc>().add(
-          SavePinnedParameters(
-            patientId: widget.patientId,
-            pinnedParameters: pinnedParameters,
-          ),
-        );
+      SavePinnedParameters(
+        patientId: widget.patientId,
+        pinnedParameters: pinnedParameters,
+      ),
+    );
   }
 
   void _handleDiaryState(BuildContext context, DiaryState state) {
@@ -434,11 +437,15 @@ class _EditPinnedIndicatorsPageState
                                             _intervalMinutes[key] ?? 60;
 
                                         return Container(
-                                          margin: const EdgeInsets.only(bottom: 12),
+                                          margin: const EdgeInsets.only(
+                                            bottom: 12,
+                                          ),
                                           padding: const EdgeInsets.all(16),
                                           decoration: BoxDecoration(
                                             color: Colors.grey.shade50,
-                                            borderRadius: BorderRadius.circular(12),
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
                                             border: Border.all(
                                               color: Colors.grey.shade300,
                                             ),
@@ -452,21 +459,29 @@ class _EditPinnedIndicatorsPageState
                                                   Expanded(
                                                     child: Text(
                                                       indicator,
-                                                      style: GoogleFonts.firaSans(
-                                                        fontSize: 16,
-                                                        fontWeight: FontWeight.w600,
-                                                        color: Colors.grey.shade900,
-                                                      ),
+                                                      style:
+                                                          GoogleFonts.firaSans(
+                                                            fontSize: 16,
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                            color: Colors
+                                                                .grey
+                                                                .shade900,
+                                                          ),
                                                     ),
                                                   ),
                                                   IconButton(
-                                                    icon: const Icon(Icons.close),
+                                                    icon: const Icon(
+                                                      Icons.close,
+                                                    ),
                                                     color: Colors.grey.shade600,
                                                     onPressed: () {
                                                       setState(() {
                                                         _selectedIndicators
                                                             .remove(indicator);
-                                                        _intervalMinutes.remove(key);
+                                                        _intervalMinutes.remove(
+                                                          key,
+                                                        );
                                                       });
                                                     },
                                                   ),
@@ -478,10 +493,13 @@ class _EditPinnedIndicatorsPageState
                                                   Expanded(
                                                     child: Text(
                                                       'Интервал (минуты):',
-                                                      style: GoogleFonts.firaSans(
-                                                        fontSize: 14,
-                                                        color: Colors.grey.shade700,
-                                                      ),
+                                                      style:
+                                                          GoogleFonts.firaSans(
+                                                            fontSize: 14,
+                                                            color: Colors
+                                                                .grey
+                                                                .shade700,
+                                                          ),
                                                     ),
                                                   ),
                                                   const SizedBox(width: 12),
@@ -495,31 +513,43 @@ class _EditPinnedIndicatorsPageState
                                                         fillColor: Colors.white,
                                                         border: OutlineInputBorder(
                                                           borderRadius:
-                                                              BorderRadius.circular(8),
-                                                          borderSide: BorderSide(
-                                                              color:
-                                                                  Colors.grey.shade300),
+                                                              BorderRadius.circular(
+                                                                8,
+                                                              ),
+                                                          borderSide:
+                                                              BorderSide(
+                                                                color: Colors
+                                                                    .grey
+                                                                    .shade300,
+                                                              ),
                                                         ),
                                                         contentPadding:
                                                             const EdgeInsets.symmetric(
-                                                          horizontal: 12,
-                                                          vertical: 10,
-                                                        ),
+                                                              horizontal: 12,
+                                                              vertical: 10,
+                                                            ),
                                                       ),
-                                                      style: GoogleFonts.firaSans(),
-                                                      controller: TextEditingController(
-                                                        text: currentInterval.toString(),
-                                                      )..selection =
-                                                          TextSelection.fromPosition(
-                                                        TextPosition(
-                                                            offset: currentInterval
-                                                                .toString()
-                                                                .length),
-                                                      ),
+                                                      style:
+                                                          GoogleFonts.firaSans(),
+                                                      controller:
+                                                          TextEditingController(
+                                                              text: currentInterval
+                                                                  .toString(),
+                                                            )
+                                                            ..selection =
+                                                                TextSelection.fromPosition(
+                                                                  TextPosition(
+                                                                    offset: currentInterval
+                                                                        .toString()
+                                                                        .length,
+                                                                  ),
+                                                                ),
                                                       onChanged: (value) {
                                                         final newInterval =
-                                                            int.tryParse(value) ??
-                                                                currentInterval;
+                                                            int.tryParse(
+                                                              value,
+                                                            ) ??
+                                                            currentInterval;
                                                         setState(() {
                                                           _intervalMinutes[key] =
                                                               newInterval;
@@ -597,8 +627,8 @@ class _EditPinnedIndicatorsPageState
                                         strokeWidth: 2,
                                         valueColor:
                                             AlwaysStoppedAnimation<Color>(
-                                          Colors.white,
-                                        ),
+                                              Colors.white,
+                                            ),
                                       ),
                                     ),
                                   )

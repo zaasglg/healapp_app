@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../config/app_config.dart';
 import '../utils/app_icons.dart';
 import '../bloc/auth/auth_bloc.dart';
@@ -45,7 +46,7 @@ class _ProfilePageState extends State<ProfilePage> {
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.06),
+              color: Colors.black.withValues(alpha: 0.06),
               blurRadius: 8,
               offset: const Offset(0, 4),
             ),
@@ -91,54 +92,6 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  /// Получить имя для отображения (организация или имя сиделки)
-  String _getDisplayName(Map<String, dynamic>? userData) {
-    if (userData == null) return '';
-
-    final accountType = userData['account_type'] as String?;
-
-    // Для частной сиделки или клиента показываем имя и фамилию
-    if (accountType == 'specialist' || accountType == 'client') {
-      final firstName = (userData['first_name'] as String?)?.trim() ?? '';
-      final lastName = (userData['last_name'] as String?)?.trim() ?? '';
-
-      if (firstName.isNotEmpty || lastName.isNotEmpty) {
-        return '$firstName $lastName'.trim();
-      }
-
-      // Пробуем поле name
-      final name = (userData['name'] as String?)?.trim();
-      if (name != null && name.isNotEmpty) {
-        return name;
-      }
-
-      // Если имя не заполнено, показываем телефон
-      return (userData['phone'] as String?)?.trim() ?? '';
-    }
-
-    // Для организаций показываем название организации
-    final organization = userData['organization'] as Map<String, dynamic>?;
-    if (organization != null) {
-      final name = (organization['name'] as String?)?.trim();
-      if (name != null && name.isNotEmpty) return name;
-    }
-
-    return '';
-  }
-
-  /// Получить отображаемый контакт
-  String _getDisplayContact(Map<String, dynamic>? userData) {
-    if (userData == null) return '';
-
-    final email = (userData['email'] as String?)?.trim();
-    final phone = (userData['phone'] as String?)?.trim();
-
-    if (email != null && email.isNotEmpty) return email;
-    if (phone != null && phone.isNotEmpty) return phone;
-
-    return '';
-  }
-
   /// Виджет для отображения аватара
   Widget _buildAvatar(String? avatarUrl) {
     if (avatarUrl != null && avatarUrl.isNotEmpty) {
@@ -147,55 +100,46 @@ class _ProfilePageState extends State<ProfilePage> {
       debugPrint('ProfilePage: fullUrl = $fullUrl');
 
       return ClipOval(
-        child: Image.network(
-          fullUrl,
+        child: CachedNetworkImage(
+          imageUrl: fullUrl,
           width: 56,
           height: 56,
           fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) {
-            return Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade200,
-                shape: BoxShape.circle,
+          placeholder: (context, url) => Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade200,
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: CircularProgressIndicator(
+                color: AppConfig.primaryColor,
+                strokeWidth: 2,
               ),
-              child: Center(
-                child: SvgPicture.asset(
-                  AppIcons.profile,
-                  width: 40,
-                  height: 40,
-                  fit: BoxFit.contain,
-                ),
+            ),
+          ),
+          errorWidget: (context, url, error) => Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade200,
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: SvgPicture.asset(
+                AppIcons.profile,
+                width: 40,
+                height: 40,
+                fit: BoxFit.contain,
               ),
-            );
-          },
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade200,
-                shape: BoxShape.circle,
-              ),
-              child: Center(
-                child: CircularProgressIndicator(
-                  value: loadingProgress.expectedTotalBytes != null
-                      ? loadingProgress.cumulativeBytesLoaded /
-                            loadingProgress.expectedTotalBytes!
-                      : null,
-                  color: AppConfig.primaryColor,
-                  strokeWidth: 2,
-                ),
-              ),
-            );
-          },
+            ),
+          ),
         ),
       );
     }
 
-    return Container(
+    return SizedBox(
       width: 56,
       height: 56,
       child: Center(
@@ -240,122 +184,138 @@ class _ProfilePageState extends State<ProfilePage> {
           child: BlocBuilder<AuthBloc, AuthState>(
             builder: (context, state) {
               // Получаем данные пользователя из состояния
-              Map<String, dynamic>? userData;
               String? avatarUrl;
               String? accountType;
+              String displayName = '';
+              String displayContact = '';
+
               if (state is AuthAuthenticated) {
-                userData = state.user.additionalData;
                 avatarUrl = state.user.avatar;
                 accountType = state.user.accountType;
+                displayName = state.user.displayName;
+                displayContact = state.user.displayContact;
+
                 // Логируем для отладки
                 debugPrint('ProfilePage: avatarUrl = $avatarUrl');
-                debugPrint(
-                  'ProfilePage: userData avatar = ${userData?['avatar']}',
-                );
               }
 
               final isSpecialist = accountType == 'specialist';
 
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const SizedBox(height: 20),
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.06),
-                          blurRadius: 8,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            _buildAvatar(avatarUrl),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _getDisplayName(userData),
-                                    style: GoogleFonts.firaSans(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w800,
-                                      color: Colors.grey.shade900,
-                                    ),
-                                  ),
-                                  Text(
-                                    _getDisplayContact(userData),
-                                    style: GoogleFonts.firaSans(
-                                      fontSize: 12,
-                                      color: Colors.grey.shade600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: SizedBox(
-                                      height: 28,
-                                      child: ElevatedButton(
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor:
-                                              AppConfig.primaryColor,
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 0,
-                                          ),
-                                          minimumSize: const Size(0, 28),
-                                          tapTargetSize:
-                                              MaterialTapTargetSize.shrinkWrap,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              8,
+              return RefreshIndicator(
+                color: AppConfig.primaryColor,
+                onRefresh: () async {
+                  context.read<AuthBloc>().add(const AuthRefreshUser());
+                  // Небольшая задержка для визуального эффекта обновления
+                  await Future.delayed(const Duration(seconds: 1));
+                },
+                child: CustomScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const SizedBox(height: 20),
+                          Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.06),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              children: [
+                                Row(
+                                  children: [
+                                    _buildAvatar(avatarUrl),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            displayName,
+                                            style: GoogleFonts.firaSans(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w800,
+                                              color: Colors.grey.shade900,
                                             ),
                                           ),
-                                          elevation: 0,
-                                        ),
-                                        onPressed: () =>
-                                            context.push('/settings'),
-                                        child: Text(
-                                          'Настройки',
-                                          style: GoogleFonts.firaSans(
-                                            fontSize: 12,
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w600,
+                                          Text(
+                                            displayContact,
+                                            style: GoogleFonts.firaSans(
+                                              fontSize: 12,
+                                              color: Colors.grey.shade600,
+                                            ),
                                           ),
-                                        ),
+                                          const SizedBox(height: 6),
+                                          Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: SizedBox(
+                                              height: 28,
+                                              child: ElevatedButton(
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor:
+                                                      AppConfig.primaryColor,
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 12,
+                                                        vertical: 0,
+                                                      ),
+                                                  minimumSize: const Size(
+                                                    0,
+                                                    28,
+                                                  ),
+                                                  tapTargetSize:
+                                                      MaterialTapTargetSize
+                                                          .shrinkWrap,
+                                                  shape: RoundedRectangleBorder(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          8,
+                                                        ),
+                                                  ),
+                                                  elevation: 0,
+                                                ),
+                                                onPressed: () =>
+                                                    context.push('/settings'),
+                                                child: Text(
+                                                  'Настройки',
+                                                  style: GoogleFonts.firaSans(
+                                                    fontSize: 12,
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                  ),
-                                ],
-                              ),
+                                  ],
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  Text(
-                    'Управление профилем',
-                    style: GoogleFonts.firaSans(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.grey.shade900,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      child: Column(
-                        children: [
+                          ),
+                          const SizedBox(height: 18),
+                          Text(
+                            'Управление профилем',
+                            style: GoogleFonts.firaSans(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.grey.shade900,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          // Меню
                           _buildMenuCard(
                             context: context,
                             title: 'Мои дневники',
@@ -368,68 +328,86 @@ class _ProfilePageState extends State<ProfilePage> {
                             subtitle: 'Просмотр и редактирование',
                             onTap: () => context.push('/wards'),
                           ),
-                          // Для клиентов показываем только "Мои дневники"
                           if (accountType != 'client') ...[
-                            // Показываем только для организаций
-                            if (!isSpecialist)
+                            if (!isSpecialist &&
+                                accountType != 'doctor' &&
+                                accountType != 'caregiver')
                               _buildMenuCard(
                                 context: context,
                                 title: 'Сотрудники',
                                 subtitle: 'Управление командой',
                                 onTap: () => context.push('/employees'),
                               ),
-                            _buildMenuCard(
-                              context: context,
-                              title: 'Клиенты',
-                              subtitle: 'Список клиентов',
-                              onTap: () => context.push('/clients'),
-                            ),
+                            if (accountType != 'doctor' &&
+                                accountType != 'caregiver')
+                              _buildMenuCard(
+                                context: context,
+                                title: 'Клиенты',
+                                subtitle: 'Список клиентов',
+                                onTap: () => context.push('/clients'),
+                              ),
                           ],
-                          const SizedBox(height: 36),
                         ],
                       ),
                     ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12.0),
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppConfig.primaryColor,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(28),
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16.0,
+                          vertical: 12.0,
                         ),
-                      ),
-                      onPressed: () async {
-                        final url = Uri.parse(
-                          'https://api.whatsapp.com/send/?phone=79145391376&text&type=phone_number&app_absent=0',
-                        );
-                        if (await canLaunchUrl(url)) {
-                          await launchUrl(
-                            url,
-                            mode: LaunchMode.externalApplication,
-                          );
-                        } else {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Не удалось открыть WhatsApp'),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const SizedBox(height: 36),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppConfig.primaryColor,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(28),
+                                ),
                               ),
-                            );
-                          }
-                        }
-                      },
-                      child: Text(
-                        'Связаться с поддержкой',
-                        style: GoogleFonts.firaSans(
-                          fontSize: 16,
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
+                              onPressed: () async {
+                                final url = Uri.parse(
+                                  'https://t.me/zdravo_support',
+                                );
+                                if (await canLaunchUrl(url)) {
+                                  await launchUrl(
+                                    url,
+                                    mode: LaunchMode.externalApplication,
+                                  );
+                                } else {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Не удалось открыть Telegram',
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                              child: Text(
+                                'Связаться с поддержкой',
+                                style: GoogleFonts.firaSans(
+                                  fontSize: 16,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               );
             },
           ),

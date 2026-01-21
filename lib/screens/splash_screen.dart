@@ -109,7 +109,7 @@ class _SplashScreenState extends State<SplashScreen>
             children: [
               // Фоновые декоративные элементы
               _buildBackgroundElements(),
-              
+
               // Основной контент
               Center(
                 child: AnimatedBuilder(
@@ -152,11 +152,7 @@ class _SplashScreenState extends State<SplashScreen>
 
   /// Фоновые декоративные элементы
   Widget _buildBackgroundElements() {
-    return Positioned.fill(
-      child: CustomPaint(
-        painter: _BackgroundPainter(),
-      ),
-    );
+    return Positioned.fill(child: CustomPaint(painter: _BackgroundPainter()));
   }
 
   /// Логотип с улучшенным дизайном
@@ -293,17 +289,18 @@ class _BackgroundPainter extends CustomPainter {
 
     // Центральный размытый элемент
     final gradientPaint = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          AppConfig.primaryColor.withOpacity(0.05),
-          AppConfig.primaryColor.withOpacity(0.0),
-        ],
-      ).createShader(
-        Rect.fromCircle(
-          center: Offset(size.width * 0.5, size.height * 0.4),
-          radius: size.width * 0.4,
-        ),
-      );
+      ..shader =
+          RadialGradient(
+            colors: [
+              AppConfig.primaryColor.withOpacity(0.05),
+              AppConfig.primaryColor.withOpacity(0.0),
+            ],
+          ).createShader(
+            Rect.fromCircle(
+              center: Offset(size.width * 0.5, size.height * 0.4),
+              radius: size.width * 0.4,
+            ),
+          );
 
     canvas.drawCircle(
       Offset(size.width * 0.5, size.height * 0.4),
