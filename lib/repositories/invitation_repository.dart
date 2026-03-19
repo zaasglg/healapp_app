@@ -1,6 +1,6 @@
 import '../core/network/api_client.dart';
 import '../core/network/api_exceptions.dart';
-import '../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 
 /// Модель данных приглашения
 class Invitation {
@@ -62,20 +62,14 @@ class Invitation {
 /// Результат принятия приглашения
 class InvitationAcceptResult {
   final String message;
-  final String accessToken;
-  final Map<String, dynamic> user;
+  final String phone;
 
-  InvitationAcceptResult({
-    required this.message,
-    required this.accessToken,
-    required this.user,
-  });
+  InvitationAcceptResult({required this.message, required this.phone});
 
   factory InvitationAcceptResult.fromJson(Map<String, dynamic> json) {
     return InvitationAcceptResult(
       message: json['message'] ?? '',
-      accessToken: json['access_token'] ?? '',
-      user: json['user'] ?? {},
+      phone: json['phone'] ?? '',
     );
   }
 }
@@ -96,9 +90,21 @@ class InvitationRepository {
       final response = await _apiClient.get('/invitations/$token');
 
       if (response.statusCode == 200) {
-        final data = response.data as Map<String, dynamic>;
-        log.i('Приглашение найдено: ${data['organization_name']}');
-        return Invitation.fromJson(data);
+        final rawData = response.data;
+        if (rawData is! Map) {
+          throw ServerException('Неверный формат ответа');
+        }
+
+        final mapData = Map<String, dynamic>.from(rawData);
+        final invitationDataRaw = mapData['invitation'];
+        final invitationData = invitationDataRaw is Map
+            ? Map<String, dynamic>.from(invitationDataRaw)
+            : mapData;
+
+        log.i(
+          'Приглашение найдено: ${invitationData['organization_name'] ?? invitationData['patient_name'] ?? ''}',
+        );
+        return Invitation.fromJson(invitationData);
       }
 
       throw ServerException('Неизвестная ошибка');
@@ -122,6 +128,9 @@ class InvitationRepository {
     String? passwordConfirmation,
     String? firstName,
     String? lastName,
+    String? type,
+    String? organizationName,
+    String? address,
   }) async {
     try {
       log.d('Принятие приглашения: $token');
@@ -139,6 +148,18 @@ class InvitationRepository {
 
       if (lastName != null && lastName.isNotEmpty) {
         body['last_name'] = lastName;
+      }
+
+      if (type != null && type.isNotEmpty) {
+        body['type'] = type;
+      }
+
+      if (organizationName != null && organizationName.isNotEmpty) {
+        body['organization_name'] = organizationName;
+      }
+
+      if (address != null && address.isNotEmpty) {
+        body['address'] = address;
       }
 
       final response = await _apiClient.post(
@@ -167,8 +188,8 @@ class InvitationRepository {
     }
   }
 
-  /// Создать приглашение для клиента (родственника)
-  /// POST /api/v1/invitations/client
+  /// Создать приглашение для клиента дневника
+  /// POST /api/v1/invitations/diary-client
   ///
   /// [patientId] - ID пациента, к которому привязываем клиента
   ///
@@ -181,7 +202,7 @@ class InvitationRepository {
       log.d('Создание приглашения для клиента: patientId=$patientId');
 
       final response = await _apiClient.post(
-        '/invitations/client',
+        '/invitations/diary-client',
         data: {'patient_id': patientId},
       );
 

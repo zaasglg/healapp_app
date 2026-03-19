@@ -3,8 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:ui';
-// Conditional import for web
-import 'package:healapp_mobile/utils/downloader/downloader.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// Красивое модальное окно для предложения скачать приложение (только для веб-версии)
 class DownloadAppModal extends StatelessWidget {
@@ -45,13 +44,6 @@ class DownloadAppModal extends StatelessWidget {
       await _storage.write(key: _storageKey, value: 'true');
     } catch (e) {
       // Игнорируем ошибки записи
-    }
-  }
-
-  /// Скачивает APK файл
-  static void _downloadApk() {
-    if (kIsWeb) {
-      downloadFile('assets/assets/app/app-release.apk', 'HealApp.apk');
     }
   }
 
@@ -163,8 +155,11 @@ class DownloadAppModal extends StatelessWidget {
                       'Скачать приложение',
                       Icons.download_rounded,
                       () async {
-                        _downloadApk();
-                        await _markAsDismissed();
+                        launchUrl(
+                          Uri.parse(
+                            'https://drive.google.com/file/d/15yMRn-XBBbyz8amRjFAZNQNaISNnha-I/view?usp=sharing',
+                          ),
+                        );
                         if (context.mounted) {
                           Navigator.of(context).pop();
                         }

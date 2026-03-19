@@ -7,6 +7,7 @@ import '../bloc/auth/auth_bloc.dart';
 import '../bloc/auth/auth_event.dart';
 import '../bloc/auth/auth_state.dart';
 import '../utils/performance_utils.dart';
+import '../core/logging/app_logger.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -30,7 +31,7 @@ class _SplashScreenState extends State<SplashScreen>
     // Настройка анимации
     _animationController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1500),
+      duration: const Duration(milliseconds: 2500),
     );
 
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -56,7 +57,7 @@ class _SplashScreenState extends State<SplashScreen>
 
   void _checkAuthStatus() async {
     // Задержка для показа splash screen
-    await Future.delayed(const Duration(seconds: 15));
+    await Future.delayed(const Duration(seconds: 3));
 
     if (mounted) {
       // Отправляем событие проверки статуса авторизации
@@ -75,7 +76,7 @@ class _SplashScreenState extends State<SplashScreen>
         if (state is AuthAuthenticated) {
           _hasNavigated = true;
           if (mounted) {
-            context.go('/diaries');
+            context.go('/home');
           }
         } else if (state is AuthUnauthenticated) {
           _hasNavigated = true;
@@ -85,7 +86,11 @@ class _SplashScreenState extends State<SplashScreen>
         }
       } catch (e) {
         // Логируем ошибку навигации, но не прерываем выполнение
-        debugPrint('Ошибка навигации: $e');
+        log.warning(
+          'Navigation error',
+          context: LogContext.navigation,
+          error: e,
+        );
       }
     });
   }
@@ -163,12 +168,17 @@ class _SplashScreenState extends State<SplashScreen>
         height: 180,
         padding: const EdgeInsets.all(20),
         child: Image.asset(
-          'assets/icon/icon.png',
+          'assets/images/splash.png',
           fit: BoxFit.contain,
           errorBuilder: (context, error, stackTrace) {
             // Логируем ошибку для отладки
-            debugPrint('Ошибка загрузки логотипа: $error');
-            debugPrint('Путь: assets/icon/icon.png');
+            log.warning(
+              'Logo load error',
+              context: LogContext.ui,
+              error: error,
+              stackTrace: stackTrace,
+              extra: {'path': 'assets/images/splash.png'},
+            );
             // Fallback на иконку, если изображение не найдено
             return Icon(
               Icons.favorite_rounded,

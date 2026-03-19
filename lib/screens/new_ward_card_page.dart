@@ -9,9 +9,10 @@ import '../utils/app_icons.dart';
 import '../bloc/patient/patient_bloc.dart';
 import '../bloc/patient/patient_event.dart';
 import '../bloc/patient/patient_state.dart';
-import '../bloc/organization/organization_bloc.dart';
-import '../bloc/organization/organization_state.dart';
+import '../bloc/auth/auth_bloc.dart';
+import '../bloc/auth/auth_state.dart';
 import '../repositories/organization_repository.dart';
+import '../core/logging/app_logger.dart';
 
 class NewWardCardPage extends StatefulWidget {
   const NewWardCardPage({super.key});
@@ -51,7 +52,7 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
     'Интересный досуг',
     'Напоминать о приеме лекарств',
     'Помощь в кормлении',
-    'Мерять давление',
+    'Мерить давление',
     'Уборка',
     'Стирка',
     'Уколы',
@@ -124,13 +125,19 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
       final birthDate = _parseBirthDate(_birthDateController.text);
 
       // Debug логирование
-      debugPrint('=== Создание пациента ===');
-      debugPrint('ФИО: ${_fullNameController.text}');
-      debugPrint('Дата рождения (ввод): ${_birthDateController.text}');
-      debugPrint('Дата рождения (парсинг): $birthDate');
+      log.debug(
+        'Creating patient',
+        context: LogContext.ui,
+        extra: {
+          'fullName': _fullNameController.text,
+          'birthDateInput': _birthDateController.text,
+          'birthDateParsed': birthDate,
+        },
+      );
 
       // Формируем данные для API
       final patientData = <String, dynamic>{
+        'full_name': _fullNameController.text.trim(),
         'first_name': nameParts['first_name'],
         'last_name': nameParts['last_name'],
         'middle_name': nameParts['middle_name'],
@@ -142,35 +149,57 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
         'wishes': _wishes,
       };
 
-      // Получаем organization_id напрямую из репозитория
+      // ВРЕМЕННОЕ РЕШЕНИЕ: используем creator_id из текущего пользователя
+      // TODO: Исправить на бэкенде - создавать запись в organizations при регистрации
+      final authState = context.read<AuthBloc>().state;
+      if (authState is AuthAuthenticated) {
+        final userId = int.tryParse(authState.user.id);
+        if (userId != null) {
+          // Сервер автоматически установит creator_id, но мы можем передать явно
+          log.debug(
+            'Patient will be linked to creator_id',
+            context: LogContext.ui,
+            extra: {'creator_id': userId},
+          );
+        }
+      }
+
+      // Попытка получить organization_id (если запись существует)
       try {
         final orgRepo = OrganizationRepository();
         final orgData = await orgRepo.getOrganization();
         final orgId = orgData['id'];
         if (orgId != null) {
           patientData['organization_id'] = orgId;
-          debugPrint('📋 Organization ID добавлен: $orgId');
+          log.debug(
+            'Organization ID added',
+            context: LogContext.ui,
+            extra: {'orgId': orgId},
+          );
         }
       } catch (e) {
-        debugPrint('⚠️ Ошибка получения organization: $e');
-        // Попробуем из BLoC как fallback
-        final orgState = context.read<OrganizationBloc>().state;
-        if (orgState is OrganizationLoaded) {
-          final orgId = orgState.organization['id'];
-          if (orgId != null) {
-            patientData['organization_id'] = orgId;
-            debugPrint('📋 Organization ID из BLoC: $orgId');
-          }
-        }
+        log.debug(
+          'Organization not found (normal for new account)',
+          context: LogContext.ui,
+          error: e,
+        );
+        // Не критично - сервер всё равно установит creator_id
       }
 
-      debugPrint('Данные до очистки: $patientData');
-      debugPrint('Пожелания: $_wishes');
+      log.debug(
+        'Patient data before cleanup',
+        context: LogContext.ui,
+        extra: {'data': patientData, 'wishes': _wishes},
+      );
 
       // Убираем null значения
       patientData.removeWhere((key, value) => value == null);
 
-      debugPrint('Данные после очистки: $patientData');
+      log.debug(
+        'Patient data after cleanup',
+        context: LogContext.ui,
+        extra: {'data': patientData},
+      );
 
       // Проверяем что context ещё mounted
       if (!mounted) return;
@@ -189,9 +218,10 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
     required Color gradientStart,
     required Color gradientEnd,
     Color textColor = Colors.white,
+    double bottomMargin = 12,
   }) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.only(bottom: bottomMargin),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [gradientStart, gradientEnd],
@@ -291,7 +321,7 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
               autoCloseDuration: const Duration(seconds: 3),
               borderRadius: BorderRadius.circular(12),
             );
-            context.pop(true); // Возвращаем true для обновления списка
+            context.pop(state.patient);
           } else if (state is PatientError) {
             toastification.show(
               context: context,
@@ -366,7 +396,8 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                             },
                             gradientStart: const Color(0xFFA0E7E5),
                             gradientEnd: const Color(0xFF7DD3DC),
-                            textColor: Colors.grey.shade900,
+                            textColor: Colors.white,
+                            bottomMargin: 0,
                             content: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
@@ -386,27 +417,34 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                     filled: true,
                                     fillColor: Colors.white,
                                     border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
+                                      borderRadius: BorderRadius.circular(
+                                        12,
+                                      ),
                                       borderSide: BorderSide(
                                         color: Colors.grey.shade200,
                                       ),
                                     ),
                                     enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
+                                      borderRadius: BorderRadius.circular(
+                                        12,
+                                      ),
                                       borderSide: BorderSide(
                                         color: Colors.grey.shade200,
                                       ),
                                     ),
                                     focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
+                                      borderRadius: BorderRadius.circular(
+                                        12,
+                                      ),
                                       borderSide: BorderSide(
                                         color: AppConfig.primaryColor,
                                       ),
                                     ),
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 14,
-                                    ),
+                                    contentPadding:
+                                        const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 14,
+                                        ),
                                   ),
                                   validator: (value) {
                                     if (value == null || value.isEmpty) {
@@ -432,27 +470,34 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                     filled: true,
                                     fillColor: Colors.white,
                                     border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
+                                      borderRadius: BorderRadius.circular(
+                                        12,
+                                      ),
                                       borderSide: BorderSide(
                                         color: Colors.grey.shade200,
                                       ),
                                     ),
                                     enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
+                                      borderRadius: BorderRadius.circular(
+                                        12,
+                                      ),
                                       borderSide: BorderSide(
                                         color: Colors.grey.shade200,
                                       ),
                                     ),
                                     focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
+                                      borderRadius: BorderRadius.circular(
+                                        12,
+                                      ),
                                       borderSide: BorderSide(
                                         color: AppConfig.primaryColor,
                                       ),
                                     ),
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 14,
-                                    ),
+                                    contentPadding:
+                                        const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 14,
+                                        ),
                                     suffixIcon: Icon(
                                       Icons.calendar_today,
                                       color: Colors.grey.shade600,
@@ -493,16 +538,16 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                           });
                                         },
                                         child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 12,
-                                          ),
+                                          padding:
+                                              const EdgeInsets.symmetric(
+                                                vertical: 12,
+                                              ),
                                           decoration: BoxDecoration(
                                             color: _gender == 'male'
                                                 ? AppConfig.primaryColor
                                                 : Colors.white,
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
                                             border: Border.all(
                                               color: _gender == 'male'
                                                   ? AppConfig.primaryColor
@@ -532,16 +577,16 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                           });
                                         },
                                         child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 12,
-                                          ),
+                                          padding:
+                                              const EdgeInsets.symmetric(
+                                                vertical: 12,
+                                              ),
                                           decoration: BoxDecoration(
                                             color: _gender == 'female'
                                                 ? AppConfig.primaryColor
                                                 : Colors.white,
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
                                             border: Border.all(
                                               color: _gender == 'female'
                                                   ? AppConfig.primaryColor
@@ -569,12 +614,14 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                   width: double.infinity,
                                   child: ElevatedButton(
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: AppConfig.primaryColor,
+                                      backgroundColor:
+                                          AppConfig.primaryColor,
                                       padding: const EdgeInsets.symmetric(
                                         vertical: 14,
                                       ),
                                       shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
+                                        borderRadius:
+                                            BorderRadius.circular(12),
                                       ),
                                       elevation: 0,
                                     ),
@@ -596,6 +643,7 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                               ],
                             ),
                           ),
+                          const SizedBox(height: 12),
 
                           // Diseases section
                           _buildExpandableSection(
@@ -603,9 +651,11 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                             subtitle:
                                 'Деменция, паркинсон, инсульт, инфаркт и т.д.',
                             isExpanded: _isDiseasesExpanded,
+                            bottomMargin: 0,
                             onTap: () {
                               setState(() {
-                                _isDiseasesExpanded = !_isDiseasesExpanded;
+                                _isDiseasesExpanded =
+                                    !_isDiseasesExpanded;
                               });
                             },
                             gradientStart: const Color(0xFF5CBCC7),
@@ -618,7 +668,7 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                   style: GoogleFonts.firaSans(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w600,
-                                    color: Colors.white,
+                                    color: Colors.grey.shade900,
                                   ),
                                 ),
                                 const SizedBox(height: 12),
@@ -632,24 +682,28 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                       onTap: () {
                                         setState(() {
                                           if (isSelected) {
-                                            _selectedDiseases.remove(disease);
+                                            _selectedDiseases.remove(
+                                              disease,
+                                            );
                                           } else {
-                                            _selectedDiseases.add(disease);
+                                            _selectedDiseases.add(
+                                              disease,
+                                            );
                                           }
                                         });
                                       },
                                       child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 10,
-                                        ),
+                                        padding:
+                                            const EdgeInsets.symmetric(
+                                              horizontal: 16,
+                                              vertical: 10,
+                                            ),
                                         decoration: BoxDecoration(
                                           color: isSelected
                                               ? const Color(0xFFA0D9E3)
                                               : Colors.white,
-                                          borderRadius: BorderRadius.circular(
-                                            20,
-                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(20),
                                           border: Border.all(
                                             color: isSelected
                                                 ? const Color(0xFFA0D9E3)
@@ -680,22 +734,25 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                     style: GoogleFonts.firaSans(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w600,
-                                      color: Colors.white,
+                                      color: Colors.grey.shade900,
                                     ),
                                   ),
                                   const SizedBox(height: 12),
                                   ..._selectedDiseases
-                                      .where((d) => !_diseases.contains(d))
+                                      .where(
+                                        (d) => !_diseases.contains(d),
+                                      )
                                       .map((disease) {
                                         return Container(
                                           margin: const EdgeInsets.only(
                                             bottom: 8,
                                           ),
                                           decoration: BoxDecoration(
-                                            color: const Color(0xFFA0D9E3),
-                                            borderRadius: BorderRadius.circular(
-                                              12,
+                                            color: const Color(
+                                              0xFFA0D9E3,
                                             ),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
                                           ),
                                           child: Row(
                                             children: [
@@ -708,31 +765,38 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                                       ),
                                                   child: Text(
                                                     disease,
-                                                    style: GoogleFonts.firaSans(
-                                                      fontSize: 14,
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                      color: Colors.white,
-                                                    ),
+                                                    style:
+                                                        GoogleFonts.firaSans(
+                                                          fontSize: 14,
+                                                          fontWeight:
+                                                              FontWeight
+                                                                  .w600,
+                                                          color:
+                                                              const Color(
+                                                                0xFF4A4A4A,
+                                                              ),
+                                                        ),
                                                   ),
                                                 ),
                                               ),
                                               InkWell(
                                                 onTap: () {
                                                   setState(() {
-                                                    _selectedDiseases.remove(
-                                                      disease,
-                                                    );
+                                                    _selectedDiseases
+                                                        .remove(disease);
                                                   });
                                                 },
                                                 child: Container(
-                                                  padding: const EdgeInsets.all(
-                                                    12,
-                                                  ),
-                                                  child: const Icon(
+                                                  padding:
+                                                      const EdgeInsets.all(
+                                                        12,
+                                                      ),
+                                                  child: Icon(
                                                     Icons.delete_outline,
                                                     size: 20,
-                                                    color: Colors.white,
+                                                    color: Colors
+                                                        .grey
+                                                        .shade600,
                                                   ),
                                                 ),
                                               ),
@@ -743,40 +807,56 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                       .toList(),
                                 ],
                                 const SizedBox(height: 16),
+                                Text(
+                                  'Добавить свою болезнь',
+                                  style: GoogleFonts.firaSans(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.grey.shade900,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
                                 Row(
                                   children: [
                                     Expanded(
                                       child: TextFormField(
-                                        controller: _customDiseaseController,
+                                        controller:
+                                            _customDiseaseController,
                                         decoration: InputDecoration(
                                           hintText:
-                                              'Добавить болезнь не из списка',
+                                              'Введите название болезни',
                                           filled: true,
                                           fillColor: Colors.white,
                                           border: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
                                             borderSide: BorderSide(
                                               color: Colors.grey.shade200,
                                             ),
                                           ),
-                                          enabledBorder: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
-                                            borderSide: BorderSide(
-                                              color: Colors.grey.shade200,
-                                            ),
-                                          ),
-                                          focusedBorder: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
-                                            borderSide: BorderSide(
-                                              color: AppConfig.primaryColor,
-                                            ),
-                                          ),
+                                          enabledBorder:
+                                              OutlineInputBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                      12,
+                                                    ),
+                                                borderSide: BorderSide(
+                                                  color: Colors
+                                                      .grey
+                                                      .shade200,
+                                                ),
+                                              ),
+                                          focusedBorder:
+                                              OutlineInputBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                      12,
+                                                    ),
+                                                borderSide: BorderSide(
+                                                  color: AppConfig
+                                                      .primaryColor,
+                                                ),
+                                              ),
                                           contentPadding:
                                               const EdgeInsets.symmetric(
                                                 horizontal: 16,
@@ -793,9 +873,11 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                             .isNotEmpty) {
                                           setState(() {
                                             _selectedDiseases.add(
-                                              _customDiseaseController.text,
+                                              _customDiseaseController
+                                                  .text,
                                             );
-                                            _customDiseaseController.clear();
+                                            _customDiseaseController
+                                                .clear();
                                           });
                                         }
                                       },
@@ -804,9 +886,8 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                         height: 48,
                                         decoration: BoxDecoration(
                                           color: AppConfig.primaryColor,
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(12),
                                         ),
                                         child: const Icon(
                                           Icons.add,
@@ -822,7 +903,7 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                   style: GoogleFonts.firaSans(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w600,
-                                    color: Colors.white,
+                                    color: Colors.grey.shade900,
                                   ),
                                 ),
                                 const SizedBox(height: 8),
@@ -836,22 +917,23 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                           });
                                         },
                                         child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 12,
-                                          ),
+                                          padding:
+                                              const EdgeInsets.symmetric(
+                                                vertical: 12,
+                                              ),
                                           decoration: BoxDecoration(
                                             color: _mobility == 'walks'
                                                 ? AppConfig.primaryColor
-                                                : Colors.grey.shade200,
-                                            borderRadius: BorderRadius.circular(
-                                              100,
+                                                : Colors.white,
+                                            borderRadius:
+                                                BorderRadius.circular(
+                                                  100,
+                                                ),
+                                            border: Border.all(
+                                              color: _mobility == 'walks'
+                                                  ? AppConfig.primaryColor
+                                                  : Colors.grey.shade300,
                                             ),
-                                            border: _mobility == 'walks'
-                                                ? null
-                                                : Border.all(
-                                                    color: Colors.grey.shade300,
-                                                    width: 1,
-                                                  ),
                                           ),
                                           child: Text(
                                             'Ходит',
@@ -876,22 +958,23 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                           });
                                         },
                                         child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 12,
-                                          ),
+                                          padding:
+                                              const EdgeInsets.symmetric(
+                                                vertical: 12,
+                                              ),
                                           decoration: BoxDecoration(
                                             color: _mobility == 'sits'
                                                 ? AppConfig.primaryColor
-                                                : Colors.grey.shade200,
-                                            borderRadius: BorderRadius.circular(
-                                              100,
+                                                : Colors.white,
+                                            borderRadius:
+                                                BorderRadius.circular(
+                                                  100,
+                                                ),
+                                            border: Border.all(
+                                              color: _mobility == 'sits'
+                                                  ? AppConfig.primaryColor
+                                                  : Colors.grey.shade300,
                                             ),
-                                            border: _mobility == 'sits'
-                                                ? null
-                                                : Border.all(
-                                                    color: Colors.grey.shade300,
-                                                    width: 1,
-                                                  ),
                                           ),
                                           child: Text(
                                             'Сидит',
@@ -916,22 +999,23 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                           });
                                         },
                                         child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 12,
-                                          ),
+                                          padding:
+                                              const EdgeInsets.symmetric(
+                                                vertical: 12,
+                                              ),
                                           decoration: BoxDecoration(
                                             color: _mobility == 'lies'
                                                 ? AppConfig.primaryColor
-                                                : Colors.grey.shade200,
-                                            borderRadius: BorderRadius.circular(
-                                              100,
+                                                : Colors.white,
+                                            borderRadius:
+                                                BorderRadius.circular(
+                                                  100,
+                                                ),
+                                            border: Border.all(
+                                              color: _mobility == 'lies'
+                                                  ? AppConfig.primaryColor
+                                                  : Colors.grey.shade300,
                                             ),
-                                            border: _mobility == 'lies'
-                                                ? null
-                                                : Border.all(
-                                                    color: Colors.grey.shade300,
-                                                    width: 1,
-                                                  ),
                                           ),
                                           child: Text(
                                             'Лежит',
@@ -954,12 +1038,14 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                   width: double.infinity,
                                   child: ElevatedButton(
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: AppConfig.primaryColor,
+                                      backgroundColor:
+                                          AppConfig.primaryColor,
                                       padding: const EdgeInsets.symmetric(
                                         vertical: 14,
                                       ),
                                       shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
+                                        borderRadius:
+                                            BorderRadius.circular(12),
                                       ),
                                       elevation: 0,
                                     ),
@@ -981,16 +1067,18 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                               ],
                             ),
                           ),
+                          const SizedBox(height: 12),
 
                           // Services section
                           _buildExpandableSection(
                             title: 'Требуемые услуги',
                             subtitle:
-                                'Уколы, стирка, уборка, мерять давление и т.д.',
+                                'Уколы, стирка, уборка, мерить давление и т.д.',
                             isExpanded: _isServicesExpanded,
                             onTap: () {
                               setState(() {
-                                _isServicesExpanded = !_isServicesExpanded;
+                                _isServicesExpanded =
+                                    !_isServicesExpanded;
                               });
                             },
                             gradientStart: const Color(0xFF3D8A9C),
@@ -1008,24 +1096,28 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                       onTap: () {
                                         setState(() {
                                           if (isSelected) {
-                                            _selectedServices.remove(service);
+                                            _selectedServices.remove(
+                                              service,
+                                            );
                                           } else {
-                                            _selectedServices.add(service);
+                                            _selectedServices.add(
+                                              service,
+                                            );
                                           }
                                         });
                                       },
                                       child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 10,
-                                        ),
+                                        padding:
+                                            const EdgeInsets.symmetric(
+                                              horizontal: 16,
+                                              vertical: 10,
+                                            ),
                                         decoration: BoxDecoration(
                                           color: isSelected
                                               ? const Color(0xFFA0D9E3)
                                               : Colors.grey.shade200,
-                                          borderRadius: BorderRadius.circular(
-                                            20,
-                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(20),
                                         ),
                                         child: Text(
                                           service,
@@ -1056,17 +1148,20 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                   ),
                                   const SizedBox(height: 12),
                                   ..._selectedServices
-                                      .where((s) => !_services.contains(s))
+                                      .where(
+                                        (s) => !_services.contains(s),
+                                      )
                                       .map((service) {
                                         return Container(
                                           margin: const EdgeInsets.only(
                                             bottom: 8,
                                           ),
                                           decoration: BoxDecoration(
-                                            color: const Color(0xFFA0D9E3),
-                                            borderRadius: BorderRadius.circular(
-                                              12,
+                                            color: const Color(
+                                              0xFFA0D9E3,
                                             ),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
                                           ),
                                           child: Row(
                                             children: [
@@ -1079,27 +1174,30 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                                       ),
                                                   child: Text(
                                                     service,
-                                                    style: GoogleFonts.firaSans(
-                                                      fontSize: 14,
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                      color: Colors.white,
-                                                    ),
+                                                    style:
+                                                        GoogleFonts.firaSans(
+                                                          fontSize: 14,
+                                                          fontWeight:
+                                                              FontWeight
+                                                                  .w600,
+                                                          color: Colors
+                                                              .white,
+                                                        ),
                                                   ),
                                                 ),
                                               ),
                                               InkWell(
                                                 onTap: () {
                                                   setState(() {
-                                                    _selectedServices.remove(
-                                                      service,
-                                                    );
+                                                    _selectedServices
+                                                        .remove(service);
                                                   });
                                                 },
                                                 child: Container(
-                                                  padding: const EdgeInsets.all(
-                                                    12,
-                                                  ),
+                                                  padding:
+                                                      const EdgeInsets.all(
+                                                        12,
+                                                      ),
                                                   child: const Icon(
                                                     Icons.delete_outline,
                                                     size: 20,
@@ -1118,35 +1216,43 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                   children: [
                                     Expanded(
                                       child: TextFormField(
-                                        controller: _customServiceController,
+                                        controller:
+                                            _customServiceController,
                                         decoration: InputDecoration(
-                                          hintText: 'Добавить свою услугу',
+                                          hintText:
+                                              'Добавить свою услугу',
                                           filled: true,
                                           fillColor: Colors.white,
                                           border: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
                                             borderSide: BorderSide(
                                               color: Colors.grey.shade200,
                                             ),
                                           ),
-                                          enabledBorder: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
-                                            borderSide: BorderSide(
-                                              color: Colors.grey.shade200,
-                                            ),
-                                          ),
-                                          focusedBorder: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
-                                            borderSide: BorderSide(
-                                              color: AppConfig.primaryColor,
-                                            ),
-                                          ),
+                                          enabledBorder:
+                                              OutlineInputBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                      12,
+                                                    ),
+                                                borderSide: BorderSide(
+                                                  color: Colors
+                                                      .grey
+                                                      .shade200,
+                                                ),
+                                              ),
+                                          focusedBorder:
+                                              OutlineInputBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                      12,
+                                                    ),
+                                                borderSide: BorderSide(
+                                                  color: AppConfig
+                                                      .primaryColor,
+                                                ),
+                                              ),
                                           contentPadding:
                                               const EdgeInsets.symmetric(
                                                 horizontal: 16,
@@ -1163,9 +1269,11 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                             .isNotEmpty) {
                                           setState(() {
                                             _selectedServices.add(
-                                              _customServiceController.text,
+                                              _customServiceController
+                                                  .text,
                                             );
-                                            _customServiceController.clear();
+                                            _customServiceController
+                                                .clear();
                                           });
                                         }
                                       },
@@ -1174,9 +1282,8 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                         height: 48,
                                         decoration: BoxDecoration(
                                           color: AppConfig.primaryColor,
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(12),
                                         ),
                                         child: const Icon(
                                           Icons.add,
@@ -1200,10 +1307,13 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                   const SizedBox(height: 12),
                                   ..._wishes.map((wish) {
                                     return Container(
-                                      margin: const EdgeInsets.only(bottom: 8),
+                                      margin: const EdgeInsets.only(
+                                        bottom: 8,
+                                      ),
                                       decoration: BoxDecoration(
                                         color: const Color(0xFFA0D9E3),
-                                        borderRadius: BorderRadius.circular(12),
+                                        borderRadius:
+                                            BorderRadius.circular(12),
                                       ),
                                       child: Row(
                                         children: [
@@ -1216,11 +1326,13 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                                   ),
                                               child: Text(
                                                 wish,
-                                                style: GoogleFonts.firaSans(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: Colors.white,
-                                                ),
+                                                style:
+                                                    GoogleFonts.firaSans(
+                                                      fontSize: 14,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      color: Colors.white,
+                                                    ),
                                               ),
                                             ),
                                           ),
@@ -1231,7 +1343,10 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                               });
                                             },
                                             child: Container(
-                                              padding: const EdgeInsets.all(12),
+                                              padding:
+                                                  const EdgeInsets.all(
+                                                    12,
+                                                  ),
                                               child: const Icon(
                                                 Icons.delete_outline,
                                                 size: 20,
@@ -1255,29 +1370,35 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                           filled: true,
                                           fillColor: Colors.white,
                                           border: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
                                             borderSide: BorderSide(
                                               color: Colors.grey.shade200,
                                             ),
                                           ),
-                                          enabledBorder: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
-                                            borderSide: BorderSide(
-                                              color: Colors.grey.shade200,
-                                            ),
-                                          ),
-                                          focusedBorder: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
-                                            borderSide: BorderSide(
-                                              color: AppConfig.primaryColor,
-                                            ),
-                                          ),
+                                          enabledBorder:
+                                              OutlineInputBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                      12,
+                                                    ),
+                                                borderSide: BorderSide(
+                                                  color: Colors
+                                                      .grey
+                                                      .shade200,
+                                                ),
+                                              ),
+                                          focusedBorder:
+                                              OutlineInputBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                      12,
+                                                    ),
+                                                borderSide: BorderSide(
+                                                  color: AppConfig
+                                                      .primaryColor,
+                                                ),
+                                              ),
                                           contentPadding:
                                               const EdgeInsets.symmetric(
                                                 horizontal: 16,
@@ -1305,9 +1426,8 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                         height: 48,
                                         decoration: BoxDecoration(
                                           color: AppConfig.primaryColor,
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(12),
                                         ),
                                         child: const Icon(
                                           Icons.add,
@@ -1322,12 +1442,14 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                   width: double.infinity,
                                   child: ElevatedButton(
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: AppConfig.primaryColor,
+                                      backgroundColor:
+                                          AppConfig.primaryColor,
                                       padding: const EdgeInsets.symmetric(
                                         vertical: 14,
                                       ),
                                       shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
+                                        borderRadius:
+                                            BorderRadius.circular(12),
                                       ),
                                       elevation: 0,
                                     ),
@@ -1367,7 +1489,9 @@ class _NewWardCardPageState extends State<NewWardCardPage> {
                                 : () => _saveCard(blocContext),
                             borderRadius: BorderRadius.circular(100),
                             child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 16,
+                              ),
                               decoration: BoxDecoration(
                                 gradient: LinearGradient(
                                   colors: [

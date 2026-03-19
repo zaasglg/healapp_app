@@ -15,15 +15,11 @@ Future<String?> showTextInputModal({
   required String hint,
 }) async {
   final controller = TextEditingController();
-
   return showDialog<String>(
     context: context,
     barrierColor: Colors.black.withOpacity(0.5),
-    builder: (ctx) => Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Padding(
+    builder: (ctx) {
+      final dialogContent = Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -130,7 +126,16 @@ Future<String?> showTextInputModal({
             ),
           ],
         ),
-      ),
-    ),
+      );
+
+      return Dialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+        ),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+        child: dialogContent,
+      );
+    },
   );
 }

@@ -6,7 +6,7 @@ import '../../config/app_config.dart';
 import '../../bloc/auth/auth_bloc.dart';
 import '../../bloc/auth/auth_event.dart';
 import '../../bloc/auth/auth_state.dart';
-import '../../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 
 class FillCaregiverProfilePage extends StatefulWidget {
   const FillCaregiverProfilePage({super.key});
@@ -184,10 +184,10 @@ class _FillCaregiverProfilePageState extends State<FillCaregiverProfilePage> {
               behavior: SnackBarBehavior.floating,
             ),
           );
-          // Переход на страницу дневников
+          // Переход на главную страницу
           Future.delayed(const Duration(milliseconds: 500), () {
             if (mounted) {
-              context.go('/diaries');
+              context.go('/home');
             }
           });
         }

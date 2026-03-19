@@ -9,11 +9,15 @@ class AppConfig {
   static const Color primaryColor = Color(0xFF55ACBF);
 
   // Пример других настроек
-  static const String appName = 'HealApp';
+  static const String appName = 'Здраво';
 
   // Ссылка на поддержку в WhatsApp
   static const String supportWhatsappUrl =
       'https://api.whatsapp.com/send/?phone=79145391376&text&type=phone_number&app_absent=0';
+
+  // Демо-режим подсказок: при true подсказки всегда показываются
+  // и не помечаются как просмотренные.
+  static const bool demoHintsAlwaysVisible = true;
 }
 
 /// Тема приложения, основанная на значениях из [AppConfig].

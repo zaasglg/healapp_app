@@ -8,9 +8,13 @@ import '../../config/app_config.dart';
 import '../../bloc/auth/auth_bloc.dart';
 import '../../bloc/auth/auth_event.dart';
 import '../../bloc/auth/auth_state.dart';
+import '../../repositories/invitation_repository.dart';
+import '../../core/network/api_exceptions.dart';
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  final String? inviteToken;
+
+  const LoginPage({super.key, this.inviteToken});
   static const String routeName = '/login';
 
   @override
@@ -24,16 +28,69 @@ class _LoginPageState extends State<LoginPage> {
     mask: '+7 (###) ###-##-##',
     filter: {"#": RegExp(r'\d')},
   );
+  bool _isInviteAcceptLoading = false;
 
   void _submit() {
     if (_formKey.currentState?.validate() ?? false) {
       _formKey.currentState?.save();
       final phone = _phoneMask.getUnmaskedText();
 
-      // Отправляем событие входа через BLoC
+      if ((widget.inviteToken ?? '').isNotEmpty) {
+        _acceptInviteLogin(phone);
+        return;
+      }
+
       context.read<AuthBloc>().add(
         AuthLoginRequested(phone: phone, password: _password),
       );
+    }
+  }
+
+  Future<void> _acceptInviteLogin(String phone) async {
+    setState(() => _isInviteAcceptLoading = true);
+
+    try {
+      await invitationRepository.acceptInvitation(
+        token: widget.inviteToken!,
+        phone: phone,
+        password: _password,
+      );
+
+      // После принятия приглашения переходим к SMS-верификации
+      if (mounted) {
+        setState(() => _isInviteAcceptLoading = false);
+        context.push('/verify-code/$phone?inviteToken=${widget.inviteToken}');
+      }
+    } on ValidationException catch (e) {
+      toastification.show(
+        context: context,
+        type: ToastificationType.error,
+        style: ToastificationStyle.fillColored,
+        title: const Text('Ошибка'),
+        description: Text(e.getAllErrors().join('\n')),
+        alignment: Alignment.topCenter,
+        autoCloseDuration: const Duration(seconds: 4),
+        borderRadius: BorderRadius.circular(12),
+        showProgressBar: true,
+        icon: const Icon(Icons.error),
+      );
+    } on ApiException catch (e) {
+      toastification.show(
+        context: context,
+        type: ToastificationType.error,
+        style: ToastificationStyle.fillColored,
+        title: const Text('Ошибка'),
+        description: Text(e.message),
+        alignment: Alignment.topCenter,
+        autoCloseDuration: const Duration(seconds: 4),
+        borderRadius: BorderRadius.circular(12),
+        showProgressBar: true,
+        icon: const Icon(Icons.error),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isInviteAcceptLoading = false);
+      }
     }
   }
 
@@ -57,13 +114,14 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     // MediaQuery size not used here; removed to satisfy lints.
+    final isInviteFlow = (widget.inviteToken ?? '').isNotEmpty;
 
     return BlocListener<AuthBloc, AuthState>(
       listener: (context, state) {
         if (ModalRoute.of(context)?.isCurrent ?? false) {
           // Навигация при успешной авторизации
           if (state is AuthAuthenticated) {
-            context.go('/diaries');
+            context.go('/home');
           }
 
           // Показ ошибки при неудаче
@@ -122,6 +180,17 @@ class _LoginPageState extends State<LoginPage> {
                             color: Colors.grey.shade800,
                           ),
                         ),
+                        if (isInviteFlow) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            'Войдите, чтобы принять приглашение',
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.firaSans(
+                              fontSize: 13,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 18),
                         Form(
                           key: _formKey,
@@ -156,7 +225,9 @@ class _LoginPageState extends State<LoginPage> {
                               const SizedBox(height: 20),
                               BlocBuilder<AuthBloc, AuthState>(
                                 builder: (context, state) {
-                                  final isLoading = state is AuthLoading;
+                                  final isLoading =
+                                      state is AuthLoading ||
+                                      _isInviteAcceptLoading;
 
                                   return ElevatedButton(
                                     style: ElevatedButton.styleFrom(
@@ -211,33 +282,68 @@ class _LoginPageState extends State<LoginPage> {
                                 },
                               ),
                               const SizedBox(height: 12),
-                              Center(
-                                child: TextButton(
-                                  onPressed: () => context.push('/register'),
-                                  child: Text.rich(
-                                    TextSpan(
-                                      children: [
-                                        TextSpan(
-                                          text:
-                                              'Если еще нет аккаунта, нажмите ',
-                                          style: GoogleFonts.firaSans(
-                                            color: Colors.grey.shade600,
+                              if (!isInviteFlow)
+                                Center(
+                                  child: TextButton(
+                                    onPressed: () {
+                                      context.push('/register');
+                                    },
+                                    child: Text.rich(
+                                      TextSpan(
+                                        children: [
+                                          TextSpan(
+                                            text:
+                                                'Если еще нет аккаунта, нажмите ',
+                                            style: GoogleFonts.firaSans(
+                                              color: Colors.grey.shade600,
+                                            ),
                                           ),
-                                        ),
-                                        TextSpan(
-                                          text: 'Регистрация',
-                                          style: GoogleFonts.firaSans(
-                                            decoration:
-                                                TextDecoration.underline,
-                                            color: Colors.black,
+                                          TextSpan(
+                                            text: 'Регистрация',
+                                            style: GoogleFonts.firaSans(
+                                              decoration:
+                                                  TextDecoration.underline,
+                                              color: Colors.black,
+                                            ),
                                           ),
-                                        ),
-                                      ],
+                                        ],
+                                      ),
+                                      textAlign: TextAlign.center,
                                     ),
-                                    textAlign: TextAlign.center,
                                   ),
                                 ),
-                              ),
+                              if (isInviteFlow)
+                                Center(
+                                  child: TextButton(
+                                    onPressed: () {
+                                      context.push(
+                                        '/register?inviteToken=${widget.inviteToken}',
+                                      );
+                                    },
+                                    child: Text.rich(
+                                      TextSpan(
+                                        children: [
+                                          TextSpan(
+                                            text:
+                                                'Если еще нет аккаунта, нажмите ',
+                                            style: GoogleFonts.firaSans(
+                                              color: Colors.grey.shade600,
+                                            ),
+                                          ),
+                                          TextSpan(
+                                            text: 'Регистрация',
+                                            style: GoogleFonts.firaSans(
+                                              decoration:
+                                                  TextDecoration.underline,
+                                              color: Colors.black,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
                         ),

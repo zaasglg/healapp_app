@@ -1,0 +1,19 @@
+{
+  "file_name": "pubspec.yaml",
+  "revisions": [
+    {
+      "revision_id": "d48c2d6c-d9a1-4bb6-bbc0-de91daa8f66a",
+      "metadata": {
+        "timestamp": "2026-03-08T02:21:06.605269",
+        "type": "cache_version",
+        "source": "initial_from_disk",
+        "size": 5011,
+        "is_reverted": false,
+        "git_branch_name": "main",
+        "agent_name": "Archy",
+        "description": null
+      },
+      "saved_at": "2026-03-08T02:21:06.605637"
+    }
+  ]
+}

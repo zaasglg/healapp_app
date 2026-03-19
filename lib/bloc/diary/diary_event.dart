@@ -119,6 +119,7 @@ class DeleteDiary extends DiaryEvent {
 
   const DeleteDiary(this.diaryId);
 
+  @override
   List<Object?> get props => [diaryId];
 }
 

@@ -1,33 +1,35 @@
 import 'dart:io';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../repositories/auth_repository.dart';
+import '../../repositories/invitation_repository.dart';
 import '../../core/network/api_exceptions.dart';
-import '../../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
+import '../../core/logging/log_mixin.dart';
 import 'auth_event.dart';
 import 'auth_state.dart';
 
 /// BLoC для управления авторизацией
-class AuthBloc extends Bloc<AuthEvent, AuthState> {
+class AuthBloc extends Bloc<AuthEvent, AuthState> with BlocLogMixin {
   final AuthRepository _authRepository;
 
   AuthBloc({AuthRepository? authRepository})
     : _authRepository = authRepository ?? AuthRepository(),
       super(const AuthInitial()) {
-    log.i('Инициализация AuthBloc с обработчиками');
-    log.d(
-      'AuthLoginRequested, AuthRegisterRequested, AuthVerifyPhoneRequested',
-    );
-    log.d('AuthLogoutRequested, AuthCheckStatus, AuthRefreshUser');
+    setLogContext(LogContext.auth);
+    log.info('AuthBloc initialized', context: LogContext.auth);
+    log.debug('Event handlers registered: AuthLoginRequested, AuthRegisterRequested, AuthVerifyPhoneRequested, AuthLogoutRequested, AuthCheckStatus, AuthRefreshUser', context: LogContext.auth);
 
     on<AuthLoginRequested>(_onLoginRequested);
     on<AuthLoginWithToken>(_onLoginWithToken);
     on<AuthRegisterRequested>(_onRegisterRequested);
+    on<AuthRegisterWithInviteRequested>(_onRegisterWithInviteRequested);
     on<AuthVerifyPhoneRequested>(_onVerifyPhoneRequested);
     on<AuthLogoutRequested>(_onLogoutRequested);
     on<AuthCheckStatus>(_onCheckStatus);
     on<AuthRefreshUser>(_onRefreshUser);
     on<AuthUploadAvatarRequested>(_onUploadAvatarRequested);
     on<AuthUpdateProfileRequested>(_onUpdateProfileRequested);
+    on<AuthSessionExpired>(_onSessionExpired);
 
     log.i('AuthBloc инициализирован успешно');
   }
@@ -103,6 +105,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         'password': event.password,
         'password_confirmation': event.passwordConfirmation,
         'account_type': event.accountType,
+        'is_agree': event.isAgree ? 1 : 0,
       };
 
       // Добавляем имя и фамилию только если они указаны
@@ -145,6 +148,63 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     } on UnauthorizedException catch (e) {
       log.e('Ошибка авторизации: $e');
       emit(const AuthFailure('Ошибка при регистрации'));
+    } on NetworkException catch (e) {
+      log.e('Ошибка сети: ${e.message}');
+      emit(AuthFailure('Ошибка сети: ${e.message}'));
+    } on ServerException catch (e) {
+      log.e('Ошибка сервера: ${e.message}');
+      emit(AuthFailure('Ошибка сервера: ${e.message}'));
+    } on ApiException catch (e) {
+      log.e('API ошибка: ${e.message}');
+      emit(AuthFailure(e.message));
+    } catch (e) {
+      log.e('Неизвестная ошибка: $e');
+      emit(const AuthFailure('Неизвестная ошибка'));
+    }
+  }
+
+  /// Обработка события регистрации по приглашению
+  Future<void> _onRegisterWithInviteRequested(
+    AuthRegisterWithInviteRequested event,
+    Emitter<AuthState> emit,
+  ) async {
+    emit(const AuthLoading());
+
+    try {
+      log.d('Регистрация по приглашению: token=${event.inviteToken}');
+
+      // Вызываем acceptInvitation, но игнорируем возвращенный access_token
+      // Вместо этого переходим к SMS-верификации
+      final result = await invitationRepository.acceptInvitation(
+        token: event.inviteToken,
+        phone: event.phone,
+        password: event.password,
+        passwordConfirmation: event.passwordConfirmation,
+        firstName: event.firstName,
+        lastName: event.lastName,
+        type: event.accountType,
+        organizationName: event.organizationName,
+        address: event.address,
+      );
+
+      log.i('Приглашение принято: ${result.message}');
+      log.d('SMS отправлен на номер: ${event.phone}');
+
+      // НЕ логиним пользователя сразу! Переходим к SMS-верификации.
+      // После подтверждения SMS пользователь будет авторизован.
+      emit(AuthAwaitingSmsVerification(
+        phone: event.phone,
+        message: result.message,
+      ));
+    } on ValidationException catch (e) {
+      log.w('Ошибка валидации: ${e.message}');
+      final errorMessage = e.getAllErrors().isNotEmpty
+          ? e.getAllErrors().join(', ')
+          : e.message;
+      emit(AuthFailure(errorMessage));
+    } on UnauthorizedException catch (e) {
+      log.e('Ошибка авторизации: $e');
+      emit(const AuthFailure('Неверный токен приглашения'));
     } on NetworkException catch (e) {
       log.e('Ошибка сети: ${e.message}');
       emit(AuthFailure('Ошибка сети: ${e.message}'));
@@ -296,6 +356,20 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       log.e('Неизвестная ошибка: $e');
       emit(AuthFailure('Ошибка при загрузке аватара: ${e.toString()}'));
     }
+  }
+
+  /// Обработка истечения сессии (401 от сервера)
+  Future<void> _onSessionExpired(
+    AuthSessionExpired event,
+    Emitter<AuthState> emit,
+  ) async {
+    log.w('Сессия истекла (401). Выполняем автологаут.');
+    try {
+      await _authRepository.logout();
+    } catch (_) {
+      // Даже при ошибке очищаем состояние
+    }
+    emit(const AuthUnauthenticated());
   }
 
   /// Обработка события обновления профиля пользователя (для частной сиделки)

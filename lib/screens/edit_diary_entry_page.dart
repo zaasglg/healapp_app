@@ -261,7 +261,7 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
                       Expanded(
                         child: TextField(
                           controller: _valueController,
-                          keyboardType: TextInputType.number,
+                          keyboardType: TextInputType.text,
                           decoration: InputDecoration(
                             labelText: 'Систолическое',
                             hintText: '120',
@@ -296,7 +296,7 @@ class _EditDiaryEntryPageState extends State<EditDiaryEntryPage> {
                       Expanded(
                         child: TextField(
                           controller: _diastolicController,
-                          keyboardType: TextInputType.number,
+                          keyboardType: TextInputType.text,
                           decoration: InputDecoration(
                             labelText: 'Диастолическое',
                             hintText: '80',

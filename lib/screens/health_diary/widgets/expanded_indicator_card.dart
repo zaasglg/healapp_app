@@ -286,7 +286,7 @@ class ExpandedIndicatorCard extends StatelessWidget {
                       ),
                       isDense: true,
                     ),
-                    keyboardType: TextInputType.number,
+                    keyboardType: TextInputType.text,
                   ),
                 ),
               ),

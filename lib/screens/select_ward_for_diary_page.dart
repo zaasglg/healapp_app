@@ -16,8 +16,10 @@ import '../bloc/diary/diary_event.dart';
 import '../bloc/diary/diary_state.dart';
 
 class SelectWardForDiaryPage extends StatefulWidget {
-  const SelectWardForDiaryPage({super.key});
+  const SelectWardForDiaryPage({super.key, this.showSelectWardHint = false});
   static const String routeName = '/select-ward-for-diary';
+
+  final bool showSelectWardHint;
 
   @override
   State<SelectWardForDiaryPage> createState() => _SelectWardForDiaryPageState();
@@ -25,7 +27,10 @@ class SelectWardForDiaryPage extends StatefulWidget {
 
 class _SelectWardForDiaryPageState extends State<SelectWardForDiaryPage> {
   void _selectWard(Patient patient) {
-    context.push('/select-indicators', extra: patient);
+    context.push(
+      '/select-indicators?showRegularIndicatorsHint=1',
+      extra: patient,
+    );
   }
 
   /// Форматирование даты рождения
@@ -164,7 +169,6 @@ class _SelectWardForDiaryPageState extends State<SelectWardForDiaryPage> {
                     if (state is PatientLoaded) {
                       var patients = state.patients;
 
-                      // Фильтруем пациентов по организации
                       final orgState = context.watch<OrganizationBloc>().state;
                       if (orgState is OrganizationLoaded) {
                         final orgId = orgState.organization['id'] as int?;
@@ -175,7 +179,6 @@ class _SelectWardForDiaryPageState extends State<SelectWardForDiaryPage> {
                         }
                       }
 
-                      // Получаем список дневников и исключаем пациентов с существующими дневниками
                       final diaryState = context.watch<DiaryBloc>().state;
                       if (diaryState is DiariesLoaded) {
                         final existingPatientIds = diaryState.diaries
@@ -239,12 +242,11 @@ class _SelectWardForDiaryPageState extends State<SelectWardForDiaryPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              // Info box
                               Container(
                                 padding: const EdgeInsets.all(16),
                                 decoration: BoxDecoration(
-                                  color: AppConfig.primaryColor.withOpacity(
-                                    0.1,
+                                  color: AppConfig.primaryColor.withValues(
+                                    alpha: 0.1,
                                   ),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
@@ -258,8 +260,6 @@ class _SelectWardForDiaryPageState extends State<SelectWardForDiaryPage> {
                                 ),
                               ),
                               const SizedBox(height: 16),
-
-                              // Patient cards
                               ...patients.map((patient) {
                                 return Padding(
                                   padding: const EdgeInsets.only(bottom: 12),
@@ -269,7 +269,9 @@ class _SelectWardForDiaryPageState extends State<SelectWardForDiaryPage> {
                                       borderRadius: BorderRadius.circular(16),
                                       boxShadow: [
                                         BoxShadow(
-                                          color: Colors.black.withOpacity(0.06),
+                                          color: Colors.black.withValues(
+                                            alpha: 0.06,
+                                          ),
                                           blurRadius: 12,
                                           offset: const Offset(0, 4),
                                         ),
@@ -350,7 +352,6 @@ class _SelectWardForDiaryPageState extends State<SelectWardForDiaryPage> {
                   },
                 ),
               ),
-              // Bottom button
               Builder(
                 builder: (blocContext) {
                   return Padding(
@@ -373,7 +374,7 @@ class _SelectWardForDiaryPageState extends State<SelectWardForDiaryPage> {
                             gradient: LinearGradient(
                               colors: [
                                 AppConfig.primaryColor,
-                                AppConfig.primaryColor.withOpacity(0.8),
+                                AppConfig.primaryColor.withValues(alpha: 0.8),
                               ],
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,

@@ -6,11 +6,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../bloc/route_sheet/route_sheet_cubit.dart';
 import '../../../bloc/route_sheet/route_sheet_state.dart' hide TaskStatus;
+import '../../../bloc/diary/diary_bloc.dart';
+import '../../../bloc/diary/diary_event.dart';
 import '../widgets/route_sheet/route_sheet.dart';
 import '../../../repositories/route_sheet_repository.dart' as repo;
 import '../widgets/modals/measurement_modal.dart';
 import '../widgets/modals/text_input_modal.dart';
-import '../../../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 
 /// Вкладка маршрутного листа
 class RouteSheetTab extends StatefulWidget {
@@ -256,6 +258,10 @@ class _RouteSheetTabState extends State<RouteSheetTab> {
     // Булевые параметры - просто отмечаем как выполненные
     if (_booleanKeys.contains(taskKey)) {
       await cubit.completeTask(taskId: task.id, value: {'value': true});
+      // Обновляем историю (дневник)
+      if (mounted) {
+        context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+      }
       return;
     }
 
@@ -275,6 +281,10 @@ class _RouteSheetTabState extends State<RouteSheetTab> {
           taskId: task.id,
           value: {'value': result.value},
         );
+        // Обновляем историю (дневник)
+        if (mounted) {
+          context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+        }
       }
     } else if (taskKey == 'temperature') {
       final result = await showMeasurementModal(
@@ -289,6 +299,10 @@ class _RouteSheetTabState extends State<RouteSheetTab> {
           taskId: task.id,
           value: {'value': result.value},
         );
+        // Обновляем историю (дневник)
+        if (mounted) {
+          context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+        }
       }
     } else if (taskKey == 'pulse') {
       final result = await showMeasurementModal(
@@ -303,6 +317,10 @@ class _RouteSheetTabState extends State<RouteSheetTab> {
           taskId: task.id,
           value: {'value': result.value},
         );
+        // Обновляем историю (дневник)
+        if (mounted) {
+          context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+        }
       }
     } else if (taskKey == 'saturation' || taskKey == 'oxygen_saturation') {
       final result = await showMeasurementModal(
@@ -317,6 +335,10 @@ class _RouteSheetTabState extends State<RouteSheetTab> {
           taskId: task.id,
           value: {'value': result.value},
         );
+        // Обновляем историю (дневник)
+        if (mounted) {
+          context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+        }
       }
     } else if (taskKey == 'respiratory_rate') {
       final result = await showMeasurementModal(
@@ -331,6 +353,10 @@ class _RouteSheetTabState extends State<RouteSheetTab> {
           taskId: task.id,
           value: {'value': result.value},
         );
+        // Обновляем историю (дневник)
+        if (mounted) {
+          context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+        }
       }
     } else if (taskKey == 'pain_level') {
       final result = await showMeasurementModal(
@@ -345,6 +371,10 @@ class _RouteSheetTabState extends State<RouteSheetTab> {
           taskId: task.id,
           value: {'value': result.value},
         );
+        // Обновляем историю (дневник)
+        if (mounted) {
+          context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+        }
       }
     } else if (taskKey == 'blood_sugar') {
       final result = await showTextInputModal(
@@ -355,6 +385,10 @@ class _RouteSheetTabState extends State<RouteSheetTab> {
       );
       if (result != null) {
         await cubit.completeTask(taskId: task.id, value: {'value': result});
+        // Обновляем историю (дневник)
+        if (mounted) {
+          context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+        }
       }
     } else if (taskKey == 'fluid_intake') {
       final result = await showTextInputModal(
@@ -365,6 +399,10 @@ class _RouteSheetTabState extends State<RouteSheetTab> {
       );
       if (result != null) {
         await cubit.completeTask(taskId: task.id, value: {'value': result});
+        // Обновляем историю (дневник)
+        if (mounted) {
+          context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+        }
       }
     } else if (taskKey == 'urine_output') {
       final result = await showTextInputModal(
@@ -375,6 +413,10 @@ class _RouteSheetTabState extends State<RouteSheetTab> {
       );
       if (result != null) {
         await cubit.completeTask(taskId: task.id, value: {'value': result});
+        // Обновляем историю (дневник)
+        if (mounted) {
+          context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+        }
       }
     } else if (taskKey == 'medication' || taskKey == 'vitamins') {
       // Текстовые параметры - показываем диалог ввода текста
@@ -386,6 +428,10 @@ class _RouteSheetTabState extends State<RouteSheetTab> {
       );
       if (result != null) {
         await cubit.completeTask(taskId: task.id, value: {'value': result});
+        // Обновляем историю (дневник)
+        if (mounted) {
+          context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+        }
       }
     } else if (taskKey == 'meal' || taskKey == 'feeding') {
       final result = await showTextInputModal(
@@ -396,6 +442,10 @@ class _RouteSheetTabState extends State<RouteSheetTab> {
       );
       if (result != null) {
         await cubit.completeTask(taskId: task.id, value: {'value': result});
+        // Обновляем историю (дневник)
+        if (mounted) {
+          context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+        }
       }
     } else if (taskKey == 'cognitive_games') {
       final result = await showTextInputModal(
@@ -406,6 +456,10 @@ class _RouteSheetTabState extends State<RouteSheetTab> {
       );
       if (result != null) {
         await cubit.completeTask(taskId: task.id, value: {'value': result});
+        // Обновляем историю (дневник)
+        if (mounted) {
+          context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+        }
       }
     } else if (taskKey == 'sleep') {
       final result = await showMeasurementModal(
@@ -420,10 +474,18 @@ class _RouteSheetTabState extends State<RouteSheetTab> {
           taskId: task.id,
           value: {'value': result.value},
         );
+        // Обновляем историю (дневник)
+        if (mounted) {
+          context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+        }
       }
     } else {
       // Для остальных задач - просто отмечаем как выполненные
       await cubit.completeTask(taskId: task.id, value: {'value': true});
+      // Обновляем историю (дневник)
+      if (mounted) {
+        context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+      }
     }
   }
 }

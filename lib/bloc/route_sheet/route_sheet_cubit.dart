@@ -1,7 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../repositories/route_sheet_repository.dart';
-import '../../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 import 'route_sheet_state.dart';
 
 class RouteSheetCubit extends Cubit<RouteSheetState> {
@@ -123,6 +123,7 @@ class RouteSheetCubit extends Cubit<RouteSheetState> {
     int? assignedTo,
     int? priority,
     String? relatedDiaryKey,
+    String? type,
   }) async {
     log.d('RouteSheetCubit.createTask: Создание задачи "$title"');
     log.d('  - patientId: $patientId');
@@ -131,6 +132,7 @@ class RouteSheetCubit extends Cubit<RouteSheetState> {
     log.d('  - assignedTo: $assignedTo');
     log.d('  - priority: $priority');
     log.d('  - relatedDiaryKey: $relatedDiaryKey');
+    log.d('  - type: $type');
 
     emit(state.copyWith(isLoading: true, errorMessage: null));
 
@@ -143,6 +145,7 @@ class RouteSheetCubit extends Cubit<RouteSheetState> {
         assignedTo: assignedTo,
         priority: priority,
         relatedDiaryKey: relatedDiaryKey,
+        type: type,
       );
 
       log.i('RouteSheetCubit.createTask: Задача "$title" создана успешно');
@@ -172,6 +175,7 @@ class RouteSheetCubit extends Cubit<RouteSheetState> {
     required DateTime startDate,
     DateTime? endDate,
     String? relatedDiaryKey,
+    String? type,
   }) async {
     log.d('=== RouteSheetCubit.createTemplate: НАЧАЛО ===');
     log.d('RouteSheetCubit.createTemplate: Создание шаблона "$title"');
@@ -184,6 +188,7 @@ class RouteSheetCubit extends Cubit<RouteSheetState> {
     log.d('  - startDate: ${startDate.toIso8601String()}');
     log.d('  - endDate: ${endDate?.toIso8601String()}');
     log.d('  - relatedDiaryKey: $relatedDiaryKey');
+    log.d('  - type: $type');
 
     emit(state.copyWith(isLoading: true, errorMessage: null));
 
@@ -201,6 +206,7 @@ class RouteSheetCubit extends Cubit<RouteSheetState> {
         startDate: startDate,
         endDate: endDate,
         relatedDiaryKey: relatedDiaryKey,
+        type: type,
       );
 
       log.i(

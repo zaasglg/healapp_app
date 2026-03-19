@@ -1,6 +1,6 @@
 import '../core/network/api_client.dart';
 import '../core/network/api_exceptions.dart';
-import '../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 
 final _defaultApiClient = apiClient;
 

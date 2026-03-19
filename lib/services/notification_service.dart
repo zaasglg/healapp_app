@@ -1,9 +1,10 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
-import '../utils/app_logger.dart';
 import '../repositories/alarm_repository.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 
 /// Сервис для управления локальными уведомлениями
 class NotificationService {
@@ -20,6 +21,13 @@ class NotificationService {
   /// Инициализация сервиса уведомлений
   Future<void> initialize() async {
     if (_isInitialized) return;
+    if (kIsWeb) {
+      _isInitialized = true;
+      log.i(
+        'NotificationService отключен: web не поддерживает локальные уведомления',
+      );
+      return;
+    }
 
     // Инициализация timezone
     tz.initializeTimeZones();
@@ -335,6 +343,7 @@ class NotificationService {
     required int minute,
     required List<int> daysOfWeek,
   }) async {
+    if (kIsWeb) return;
     try {
       if (!_isInitialized) await initialize();
 
@@ -509,6 +518,7 @@ class NotificationService {
 
   /// Отмена всех уведомлений для будильника
   Future<void> cancelAlarmNotifications(int alarmId) async {
+    if (kIsWeb) return;
     // Отменяем уведомления для всех 7 дней недели
     for (int day = 1; day <= 7; day++) {
       final notificationId = alarmId * 10 + day;
@@ -519,12 +529,14 @@ class NotificationService {
 
   /// Отмена всех уведомлений
   Future<void> cancelAllNotifications() async {
+    if (kIsWeb) return;
     await _notifications.cancelAll();
     log.i('Все уведомления отменены');
   }
 
   /// Полная очистка всех уведомлений (для решения проблем с contextual actions)
   Future<void> clearAllNotifications() async {
+    if (kIsWeb) return;
     try {
       await _notifications.cancelAll();
       log.i('Выполнена полная очистка всех уведомлений');
@@ -535,6 +547,7 @@ class NotificationService {
 
   /// Очистка всех старых уведомлений (для исправления проблем)
   Future<void> clearAllAlarmNotifications() async {
+    if (kIsWeb) return;
     try {
       // Отменяем все уведомления
       await _notifications.cancelAll();
@@ -569,6 +582,7 @@ class NotificationService {
     required String title,
     required String body,
   }) async {
+    if (kIsWeb) return;
     if (!_isInitialized) await initialize();
 
     final androidDetails = AndroidNotificationDetails(
@@ -609,6 +623,7 @@ class NotificationService {
     required String title,
     required String body,
   }) async {
+    if (kIsWeb) return;
     try {
       if (!_isInitialized) await initialize();
 
@@ -675,6 +690,7 @@ class NotificationService {
 
   /// Проверка наличия разрешений
   Future<bool> hasPermissions() async {
+    if (kIsWeb) return true;
     final androidPlugin = _notifications
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin

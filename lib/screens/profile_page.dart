@@ -11,6 +11,7 @@ import '../bloc/auth/auth_bloc.dart';
 import '../bloc/auth/auth_event.dart';
 import '../bloc/auth/auth_state.dart';
 import '../core/network/api_client.dart';
+import '../core/logging/app_logger.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -95,9 +96,7 @@ class _ProfilePageState extends State<ProfilePage> {
   /// Виджет для отображения аватара
   Widget _buildAvatar(String? avatarUrl) {
     if (avatarUrl != null && avatarUrl.isNotEmpty) {
-      // Преобразуем относительный путь в полный URL
       final fullUrl = ApiConfig.getFullUrl(avatarUrl);
-      debugPrint('ProfilePage: fullUrl = $fullUrl');
 
       return ClipOval(
         child: CachedNetworkImage(
@@ -167,7 +166,13 @@ class _ProfilePageState extends State<ProfilePage> {
             height: 24,
             fit: BoxFit.contain,
           ),
-          onPressed: () => context.pop(),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/home');
+            }
+          },
         ),
         title: Text(
           'Профиль',
@@ -194,9 +199,6 @@ class _ProfilePageState extends State<ProfilePage> {
                 accountType = state.user.accountType;
                 displayName = state.user.displayName;
                 displayContact = state.user.displayContact;
-
-                // Логируем для отладки
-                debugPrint('ProfilePage: avatarUrl = $avatarUrl');
               }
 
               final isSpecialist = accountType == 'specialist';

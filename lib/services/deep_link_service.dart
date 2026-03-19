@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:app_links/app_links.dart';
-import '../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 
 /// Сервис для обработки Deep Links
 class DeepLinkService {
@@ -13,6 +13,7 @@ class DeepLinkService {
 
   /// Callback для обработки токена приглашения
   Function(String token)? onInviteReceived;
+  Function(String token)? onDiaryInviteReceived;
 
   /// Инициализация сервиса
   Future<void> initialize() async {
@@ -54,6 +55,7 @@ class DeepLinkService {
     );
 
     String? token;
+    String? diaryToken;
 
     // Обрабатываем custom scheme healapp://invite/token или healapp://invite?token=xxx
     if (uri.scheme == 'healapp' && uri.host == 'invite') {
@@ -65,6 +67,15 @@ class DeepLinkService {
       }
     }
 
+    // Обрабатываем custom scheme healapp://diary-invite/token
+    if (uri.scheme == 'healapp' && uri.host == 'diary-invite') {
+      if (uri.pathSegments.isNotEmpty) {
+        diaryToken = uri.pathSegments.first;
+      } else if (uri.path.isNotEmpty && uri.path != '/') {
+        diaryToken = uri.path.replaceFirst('/', '');
+      }
+    }
+
     // Обрабатываем HTTPS ссылки: https://domain/invite/{token}
     if (uri.scheme == 'https' || uri.scheme == 'http') {
       if (uri.pathSegments.isNotEmpty && uri.pathSegments.first == 'invite') {
@@ -72,9 +83,18 @@ class DeepLinkService {
           token = uri.pathSegments[1];
         }
       }
+      if (uri.pathSegments.isNotEmpty &&
+          uri.pathSegments.first == 'diary-invite') {
+        if (uri.pathSegments.length > 1) {
+          diaryToken = uri.pathSegments[1];
+        }
+      }
     }
 
-    if (token != null && token.isNotEmpty) {
+    if (diaryToken != null && diaryToken.isNotEmpty) {
+      log.i('Токен приглашения дневника извлечён: $diaryToken');
+      onDiaryInviteReceived?.call(diaryToken);
+    } else if (token != null && token.isNotEmpty) {
       log.i('Токен приглашения извлечён: $token');
       onInviteReceived?.call(token);
     } else {

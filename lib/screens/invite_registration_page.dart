@@ -1,12 +1,12 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import '../config/app_config.dart';
 import '../repositories/invitation_repository.dart';
-import '../core/network/api_client.dart';
 import '../core/network/api_exceptions.dart';
-import '../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 
 /// Страница регистрации сотрудника по приглашению
 class InviteRegistrationPage extends StatefulWidget {
@@ -30,8 +30,9 @@ class _InviteRegistrationPageState extends State<InviteRegistrationPage> {
   bool _isLoadingInvitation = true;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+  bool _isAgree = false;
+  bool _isMarketingAgree = false;
 
-  Invitation? _invitation;
   String? _error;
 
   final _phoneMask = MaskTextInputFormatter(
@@ -52,10 +53,9 @@ class _InviteRegistrationPageState extends State<InviteRegistrationPage> {
         _error = null;
       });
 
-      final invitation = await invitationRepository.getInvitation(widget.token);
+      await invitationRepository.getInvitation(widget.token);
 
       setState(() {
-        _invitation = invitation;
         _isLoadingInvitation = false;
       });
     } on ApiException catch (e) {
@@ -132,21 +132,12 @@ class _InviteRegistrationPageState extends State<InviteRegistrationPage> {
         lastName: lastName.isNotEmpty ? lastName : null,
       );
 
-      // Сохраняем токен через API клиент
-      await apiClient.saveToken(result.accessToken);
-
-      log.i('Регистрация успешна: ${result.message}');
+      log.i('Приглашение принято: ${result.message}');
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result.message),
-            backgroundColor: Colors.green,
-          ),
-        );
-
-        // Переходим на главную страницу
-        context.go('/profile');
+        setState(() => _isLoading = false);
+        // Переходим к подтверждению SMS
+        context.push('/verify-code/$phone?inviteToken=${widget.token}');
       }
     } on ValidationException catch (e) {
       if (mounted) {
@@ -486,13 +477,137 @@ class _InviteRegistrationPageState extends State<InviteRegistrationPage> {
                 return null;
               },
             ),
+            const SizedBox(height: 20),
+            // Checkbox Agreement
+            Row(
+              children: [
+                SizedBox(
+                  height: 24,
+                  width: 24,
+                  child: Checkbox(
+                    value: _isAgree,
+                    activeColor: AppConfig.primaryColor,
+                    onChanged: (v) {
+                      setState(() {
+                        _isAgree = v ?? false;
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(
+                      style: GoogleFonts.firaSans(
+                        fontSize: 12,
+                        color: Colors.grey.shade700,
+                      ),
+                      children: [
+                        TextSpan(
+                          text: 'Я согласен',
+                          style: const TextStyle(
+                            color: AppConfig.primaryColor,
+                            decoration: TextDecoration.underline,
+                          ),
+                          recognizer: TapGestureRecognizer()
+                            ..onTap = () {
+                              context.push('/agreement');
+                            },
+                        ),
+                        TextSpan(
+                          text:
+                              ' на обработку моих персональных данных, в соответствии с ',
+                          recognizer: TapGestureRecognizer()
+                            ..onTap = () {
+                              setState(() {
+                                _isAgree = !_isAgree;
+                              });
+                            },
+                        ),
+                        TextSpan(
+                          text: 'политикой',
+                          style: const TextStyle(
+                            color: AppConfig.primaryColor,
+                            decoration: TextDecoration.underline,
+                          ),
+                          recognizer: TapGestureRecognizer()
+                            ..onTap = () {
+                              context.push('/policy');
+                            },
+                        ),
+                        TextSpan(
+                          text: ' в отношении обработки персональных данных',
+                          recognizer: TapGestureRecognizer()
+                            ..onTap = () {
+                              setState(() {
+                                _isAgree = !_isAgree;
+                              });
+                            },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            // Checkbox Marketing Agreement
+            Row(
+              children: [
+                SizedBox(
+                  height: 24,
+                  width: 24,
+                  child: Checkbox(
+                    value: _isMarketingAgree,
+                    activeColor: AppConfig.primaryColor,
+                    onChanged: (v) {
+                      setState(() {
+                        _isMarketingAgree = v ?? false;
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _isMarketingAgree = !_isMarketingAgree;
+                      });
+                    },
+                    child: Text(
+                      'Даю согласие на получению информационных и рекламных сообщений',
+                      style: GoogleFonts.firaSans(
+                        fontSize: 12,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 32),
 
             // Кнопка регистрации
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _isLoading ? null : _handleRegistration,
+                onPressed: _isLoading
+                    ? null
+                    : () {
+                        if (!_isAgree) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Необходимо принять условия соглашения',
+                              ),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                          return;
+                        }
+                        _handleRegistration();
+                      },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppConfig.primaryColor,
                   foregroundColor: Colors.white,

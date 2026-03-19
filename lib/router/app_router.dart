@@ -27,17 +27,60 @@ import '../bloc/auth/auth_bloc.dart';
 import '../bloc/auth/auth_state.dart';
 import '../repositories/patient_repository.dart';
 
+import '../screens/legal/agreement_page.dart';
+import '../screens/legal/policy_page.dart';
+
+/// Маршруты, доступные без авторизации
+const _publicRoutes = {
+  '/splash',
+  '/login',
+  '/register',
+  '/agreement',
+  '/policy',
+};
+
+/// Маршруты с префиксами, доступные без авторизации
+const _publicPrefixes = [
+  '/verify-code/',
+  '/invite/',
+  '/diary-invite/',
+  '/fill-organization-profile',
+  '/fill-caregiver-profile',
+];
+
+bool _isPublicRoute(String location) {
+  if (_publicRoutes.contains(location)) return true;
+  return _publicPrefixes.any((prefix) => location.startsWith(prefix));
+}
+
 /// Конфигурация роутера приложения
 final GoRouter appRouter = GoRouter(
   initialLocation: '/splash',
   redirect: (context, state) {
-    // Получаем состояние авторизации
     final authBloc = context.read<AuthBloc>();
     final authState = authBloc.state;
+    final location = state.matchedLocation;
 
-    // Если пользователь на splash и авторизован - перенаправляем на профиль
-    if (state.matchedLocation == '/splash' && authState is AuthAuthenticated) {
-      return '/profile';
+    final isAuthenticated = authState is AuthAuthenticated;
+    final isLoading = authState is AuthLoading || authState is AuthInitial;
+    final isPublic = _isPublicRoute(location);
+
+    // Пока идёт проверка авторизации — не редиректим
+    if (isLoading) return null;
+
+    // Неавторизованный пользователь пытается открыть приватный маршрут
+    if (!isAuthenticated && !isPublic) {
+      return '/login';
+    }
+
+    // Авторизованный пользователь на splash — на главную
+    if (isAuthenticated && location == '/splash') {
+      return '/home';
+    }
+
+    // Авторизованный пользователь на login/register — на главную
+    if (isAuthenticated && (location == '/login' || location == '/register')) {
+      return '/home';
     }
 
     return null;
@@ -51,19 +94,26 @@ final GoRouter appRouter = GoRouter(
     GoRoute(
       path: '/login',
       name: 'login',
-      builder: (context, state) => const LoginPage(),
+      builder: (context, state) {
+        final inviteToken = state.uri.queryParameters['inviteToken'];
+        return LoginPage(inviteToken: inviteToken);
+      },
     ),
     GoRoute(
       path: '/register',
       name: 'register',
-      builder: (context, state) => const RegisterPage(),
+      builder: (context, state) {
+        final inviteToken = state.uri.queryParameters['inviteToken'];
+        return RegisterPage(inviteToken: inviteToken);
+      },
     ),
     GoRoute(
       path: '/verify-code/:phone',
       name: 'verify-code',
       builder: (context, state) {
         final phone = state.pathParameters['phone'] ?? '';
-        return VerifyCodePage(phone: phone);
+        final inviteToken = state.uri.queryParameters['inviteToken'];
+        return VerifyCodePage(phone: phone, inviteToken: inviteToken);
       },
     ),
     GoRoute(
@@ -89,7 +139,11 @@ final GoRouter appRouter = GoRouter(
     GoRoute(
       path: '/diaries',
       name: 'diaries',
-      builder: (context, state) => const DiariesPage(),
+      builder: (context, state) {
+        final showCreateDiaryHint =
+            state.uri.queryParameters['showCreateDiaryHint'] == '1';
+        return DiariesPage(showCreateDiaryHint: showCreateDiaryHint);
+      },
     ),
     GoRoute(
       path: '/settings',
@@ -127,14 +181,23 @@ final GoRouter appRouter = GoRouter(
     GoRoute(
       path: '/select-ward-for-diary',
       name: 'select-ward-for-diary',
-      builder: (context, state) => const SelectWardForDiaryPage(),
+      builder: (context, state) {
+        final showSelectWardHint =
+            state.uri.queryParameters['showSelectWardHint'] == '1';
+        return SelectWardForDiaryPage(showSelectWardHint: showSelectWardHint);
+      },
     ),
     GoRoute(
       path: '/select-indicators',
       name: 'select-indicators',
       builder: (context, state) {
         final patient = state.extra as Patient?;
-        return SelectIndicatorsPage(patient: patient);
+        final showRegularIndicatorsHint =
+            state.uri.queryParameters['showRegularIndicatorsHint'] == '1';
+        return SelectIndicatorsPage(
+          patient: patient,
+          showRegularIndicatorsHint: showRegularIndicatorsHint,
+        );
       },
     ),
     GoRoute(
@@ -190,7 +253,17 @@ final GoRouter appRouter = GoRouter(
       builder: (context, state) {
         final diaryId = int.parse(state.pathParameters['id'] ?? '0');
         final patientId = int.parse(state.pathParameters['patientId'] ?? '0');
-        return HealthDiaryPage(diaryId: diaryId, patientId: patientId);
+        final initialTabIndex = state.uri.queryParameters['tab'] != null
+            ? int.tryParse(state.uri.queryParameters['tab']!) ?? 0
+            : 0;
+        final showDiaryIntroHint =
+            state.uri.queryParameters['showDiaryIntroHint'] == '1';
+        return HealthDiaryPage(
+          diaryId: diaryId,
+          patientId: patientId,
+          initialTabIndex: initialTabIndex,
+          showDiaryIntroHint: showDiaryIntroHint,
+        );
       },
     ),
     GoRoute(
@@ -200,6 +273,25 @@ final GoRouter appRouter = GoRouter(
         final token = state.pathParameters['token'] ?? '';
         return InviteRegistrationPage(token: token);
       },
+    ),
+    GoRoute(
+      path: '/diary-invite/:token',
+      name: 'diary-invite',
+      builder: (context, state) {
+        final token = state.pathParameters['token'] ?? '';
+        return LoginPage(inviteToken: token);
+      },
+    ),
+
+    GoRoute(
+      path: '/agreement',
+      name: 'agreement',
+      builder: (context, state) => const AgreementPage(),
+    ),
+    GoRoute(
+      path: '/policy',
+      name: 'policy',
+      builder: (context, state) => const PolicyPage(),
     ),
   ],
 );

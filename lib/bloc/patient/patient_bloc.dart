@@ -2,7 +2,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../repositories/patient_repository.dart';
 import '../../core/network/api_exceptions.dart';
 import '../../core/cache/data_cache.dart';
-import '../../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 import 'patient_event.dart';
 import 'patient_state.dart';
 
@@ -113,7 +113,13 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
       log.d('Создание пациента: ${event.patientData}');
       final patient = await _patientRepository.createPatient(event.patientData);
       log.i('Пациент создан: ${patient.fullName}');
+
+      // Сначала эмитим событие создания
       emit(PatientCreated(patient));
+
+      // Затем сразу перезагружаем список с forceRefresh
+      log.d('🔄 Перезагрузка списка пациентов после создания...');
+      add(const LoadPatients(forceRefresh: true));
     } on ValidationException catch (e) {
       log.w('Ошибка валидации: ${e.getAllErrors()}');
       emit(PatientError(e.getAllErrors().join(', ')));

@@ -1,7 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../repositories/alarm_repository.dart';
 import '../../core/network/api_exceptions.dart';
-import '../../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 import '../../services/notification_service.dart';
 import 'alarm_event.dart';
 import 'alarm_state.dart';

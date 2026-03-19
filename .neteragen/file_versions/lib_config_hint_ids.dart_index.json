@@ -1,0 +1,33 @@
+{
+  "file_name": "lib/config/hint_ids.dart",
+  "revisions": [
+    {
+      "revision_id": "4d323378-7020-4d47-8f4a-09556c590435",
+      "metadata": {
+        "timestamp": "2026-03-08T15:04:37.702379",
+        "type": "cache_version",
+        "source": "external_edit",
+        "size": 352,
+        "is_reverted": false,
+        "git_branch_name": "main",
+        "agent_name": "Cody",
+        "description": "External edit"
+      },
+      "saved_at": "2026-03-08T15:56:06.016272"
+    },
+    {
+      "revision_id": "300c3e41-8504-499b-be7c-88986a7026e9",
+      "metadata": {
+        "timestamp": "2026-03-08T02:24:14.333868",
+        "type": "cache_version",
+        "source": "initial_from_disk",
+        "size": 284,
+        "is_reverted": false,
+        "git_branch_name": "main",
+        "agent_name": "Cody",
+        "description": null
+      },
+      "saved_at": "2026-03-08T02:24:14.334046"
+    }
+  ]
+}

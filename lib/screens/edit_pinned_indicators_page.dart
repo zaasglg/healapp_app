@@ -169,11 +169,18 @@ class _EditPinnedIndicatorsPageState extends State<EditPinnedIndicatorsPage> {
     final pinnedParameters = _selectedIndicators.map((indicator) {
       final key = _indicatorToKey(indicator);
       final intervalMinutes = _intervalMinutes[key] ?? 60;
+
+      // Ищем существующий параметр чтобы сохранить times и settings
+      final existingParam = widget.currentPinnedParameters
+          .cast<PinnedParameter?>()
+          .firstWhere((p) => p?.key == key, orElse: () => null);
+
       return PinnedParameter(
         key: key,
-        intervalMinutes: intervalMinutes < 1
-            ? 60
-            : intervalMinutes, // Минимум 1 минута
+        intervalMinutes: intervalMinutes < 1 ? 60 : intervalMinutes,
+        times: existingParam?.times ?? const [],
+        settings: existingParam?.settings,
+        lastRecordedAt: existingParam?.lastRecordedAt,
       );
     }).toList();
 
@@ -199,8 +206,8 @@ class _EditPinnedIndicatorsPageState extends State<EditPinnedIndicatorsPage> {
         description: const Text('Закрепленные показатели обновлены'),
         autoCloseDuration: const Duration(seconds: 2),
       );
-      // Возвращаемся назад
-      context.pop();
+      // Возвращаемся назад с результатом true
+      context.pop(true);
     } else if (state is DiaryError) {
       setState(() => _isLoading = false);
       toastification.show(
@@ -507,7 +514,7 @@ class _EditPinnedIndicatorsPageState extends State<EditPinnedIndicatorsPage> {
                                                     width: 100,
                                                     child: TextField(
                                                       keyboardType:
-                                                          TextInputType.number,
+                                                          TextInputType.text,
                                                       decoration: InputDecoration(
                                                         filled: true,
                                                         fillColor: Colors.white,

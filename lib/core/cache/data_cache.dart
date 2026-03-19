@@ -1,9 +1,18 @@
-/// Простой кэш данных в памяти
+import 'dart:async';
+
+/// Простой кэш данных в памяти с автоматической очисткой истекших записей
 class DataCache<T> {
   final Map<String, _CacheEntry<T>> _cache = {};
   final Duration defaultTtl;
+  Timer? _cleanupTimer;
 
-  DataCache({this.defaultTtl = const Duration(minutes: 5)});
+  DataCache({this.defaultTtl = const Duration(minutes: 5)}) {
+    // Автоматическая очистка истекших записей каждые 2 минуты
+    _cleanupTimer = Timer.periodic(
+      const Duration(minutes: 2),
+      (_) => clearExpired(),
+    );
+  }
 
   /// Получить значение из кэша
   T? get(String key) {
@@ -54,6 +63,13 @@ class DataCache<T> {
 
   /// Получить размер кэша
   int get size => _cache.length;
+
+  /// Освободить ресурсы (остановить таймер)
+  void dispose() {
+    _cleanupTimer?.cancel();
+    _cleanupTimer = null;
+    _cache.clear();
+  }
 }
 
 class _CacheEntry<T> {

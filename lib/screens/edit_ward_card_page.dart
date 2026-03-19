@@ -172,6 +172,7 @@ class _EditWardCardPageState extends State<EditWardCardPage> {
 
       // Формируем данные для API
       final patientData = <String, dynamic>{
+        'full_name': _fullNameController.text.trim(),
         'first_name': nameParts['first_name'],
         'last_name': nameParts['last_name'],
         'middle_name': nameParts['middle_name'],

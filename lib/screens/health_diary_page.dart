@@ -1,17 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'dart:ui';
 import 'dart:async';
 import 'package:go_router/go_router.dart';
-import '../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+
 import '../config/app_config.dart';
-import '../core/network/api_client.dart';
+import '../config/hint_ids.dart';
+import '../core/network/api_exceptions.dart';
 import '../utils/app_icons.dart';
+import '../bloc/hint/hint_bloc.dart';
+import '../bloc/hint/hint_event.dart';
 import '../bloc/route_sheet/route_sheet_cubit.dart';
 import '../bloc/route_sheet/route_sheet_state.dart';
 import '../bloc/diary/diary_bloc.dart';
@@ -20,7 +23,6 @@ import '../bloc/diary/diary_state.dart';
 
 import '../bloc/auth/auth_bloc.dart';
 import '../bloc/auth/auth_state.dart';
-import '../services/pinned_notification_service.dart';
 import '../repositories/diary_repository.dart';
 import '../bloc/alarm/alarm_bloc.dart';
 import '../bloc/alarm/alarm_event.dart';
@@ -34,17 +36,22 @@ import 'health_diary/tabs/alarm_tab.dart';
 import 'health_diary/widgets/widgets.dart';
 import 'health_diary/widgets/modals/modals.dart' as modals;
 import 'health_diary/widgets/modals/time_picker_modal.dart';
+import 'health_diary/components/components.dart';
 // Скрываем TaskStatus из route_sheet, т.к. используем из route_sheet_state.dart
 import '../utils/health_diary/health_diary_utils.dart' as diary_utils;
 
 class HealthDiaryPage extends StatefulWidget {
   final int diaryId;
   final int patientId;
+  final int initialTabIndex;
+  final bool showDiaryIntroHint;
 
   const HealthDiaryPage({
     super.key,
     required this.diaryId,
     required this.patientId,
+    this.initialTabIndex = 0,
+    this.showDiaryIntroHint = false,
   });
   static const String routeName = '/health-diary';
 
@@ -76,6 +83,12 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
   String? _clientInviteUrl;
   bool _isCreatingInvitation = false;
 
+  // Diary owner client state
+  final DiaryRepository _diaryRepository = DiaryRepository();
+  List<DiaryClient> _diaryOwnerClients = [];
+  bool _isLoadingDiaryOwner = false;
+  String? _diaryOwnerError;
+
   // Diary access management state
   final OrganizationRepository _organizationRepository =
       OrganizationRepository();
@@ -86,6 +99,12 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
 
   // Timer for updating display time
   Timer? _displayTimeTimer;
+  String? _pendingHintAfterCloseId;
+  String? _pendingHintAfterCategoryExpandId;
+  String? _activeAllIndicatorsCategoryHint;
+  bool _shouldShowAllIndicatorsCareSaveHint = false;
+  bool _isAllIndicatorsSavedHintVisible = false;
+  Timer? _allIndicatorsSavedHintTimer;
 
   // Category indicator keys
   static const List<String> _careIndicatorKeys = [
@@ -167,7 +186,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     // Сортируем по дате (свежие первые)
     entries.sort((a, b) => b.recordedAt.compareTo(a.recordedAt));
 
-    var value = entries.first.value;
+    // entry.value теперь Map<String,dynamic> — используем dynamic для совместимости
+    dynamic value = entries.first.value;
 
     // Обработка Map значений (например, {value: "Парацетамол"})
     if (value is Map) {
@@ -655,7 +675,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
               ),
               child: TextFormField(
                 controller: controller,
-                keyboardType: TextInputType.number,
+                keyboardType: TextInputType.text,
                 style: GoogleFonts.firaSans(
                   fontSize: 15,
                   color: Colors.grey.shade900,
@@ -707,7 +727,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
               ),
               child: TextFormField(
                 controller: diastolicController,
-                keyboardType: TextInputType.number,
+                keyboardType: TextInputType.text,
                 style: GoogleFonts.firaSans(
                   fontSize: 15,
                   color: Colors.grey.shade900,
@@ -740,48 +760,48 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
       hint = '36.6';
       suffix = '°C';
       icon = Icons.thermostat;
-      keyboardType = const TextInputType.numberWithOptions(decimal: true);
+      keyboardType = TextInputType.text;
     } else if (key == 'pulse') {
       hint = '70';
       suffix = 'уд/мин';
       icon = Icons.monitor_heart;
-      keyboardType = TextInputType.number;
+      keyboardType = TextInputType.text;
     } else if (key == 'saturation' || key == 'oxygen_saturation') {
       hint = '98';
       suffix = '%';
       icon = Icons.air;
-      keyboardType = TextInputType.number;
+      keyboardType = TextInputType.text;
     } else if (key == 'respiratory_rate') {
       hint = '16';
       suffix = 'вд/мин';
       icon = Icons.air;
-      keyboardType = TextInputType.number;
+      keyboardType = TextInputType.text;
     } else if (key == 'pain_level') {
       hint = '0-10';
       icon = Icons.sentiment_dissatisfied;
-      keyboardType = TextInputType.number;
+      keyboardType = TextInputType.text;
     } else if (key == 'sugar_level' || key == 'blood_sugar') {
       hint = '5.5';
       suffix = 'ммоль/л';
       icon = Icons.water_drop;
-      keyboardType = const TextInputType.numberWithOptions(decimal: true);
+      keyboardType = TextInputType.text;
     } else if (key == 'fluid_intake' || key == 'urine_output') {
       hint = '250';
       suffix = 'мл';
       icon = Icons.local_drink;
-      keyboardType = TextInputType.number;
+      keyboardType = TextInputType.text;
     } else if (key == 'weight') {
       hint = '70';
       suffix = 'кг';
       icon = Icons.monitor_weight;
-      keyboardType = const TextInputType.numberWithOptions(decimal: true);
+      keyboardType = TextInputType.text;
     } else if (key == 'diaper_change') {
       hint = 'Время смены';
       icon = Icons.baby_changing_station;
     } else if (key == 'sleep') {
       hint = 'Часов сна';
       icon = Icons.nightlight;
-      keyboardType = const TextInputType.numberWithOptions(decimal: true);
+      keyboardType = TextInputType.text;
     }
 
     return Container(
@@ -823,8 +843,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
   }
 
   int? _animatingFromIndex; // Used during animation
-  final Set<String> _selectedPhysicalIndicators = {};
-  final Set<String> _selectedExcretionIndicators = {};
 
   final Map<int, TextEditingController> _measurementControllers = {};
   final Map<int, TextEditingController> _diastolicControllers =
@@ -856,11 +874,24 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
 
     // Start timer to update display time every minute
     _startDisplayTimeTimer();
+
+    _loadDiaryOwnerClient();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!widget.showDiaryIntroHint && !AppConfig.demoHintsAlwaysVisible) {
+        return;
+      }
+      context.read<HintBloc>().add(
+        const HintShowRequested(HintIds.healthDiaryIntro),
+      );
+    });
   }
 
   @override
   void dispose() {
     _displayTimeTimer?.cancel();
+    _allIndicatorsSavedHintTimer?.cancel();
     _indicatorAnimationController.dispose();
     for (final controller in _measurementControllers.values) {
       controller.dispose();
@@ -903,6 +934,188 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     });
   }
 
+  void _dismissDiaryIntroHintIfVisible() {
+    if (context.read<HintBloc>().state.isHintVisible(
+      HintIds.healthDiaryIntro,
+    )) {
+      context.read<HintBloc>().add(
+        const HintDismissRequested(HintIds.healthDiaryIntro),
+      );
+    }
+  }
+
+  void _dismissDiaryPinnedIndicatorsHintIfVisible() {
+    if (context.read<HintBloc>().state.isHintVisible(
+      HintIds.healthDiaryPinnedIndicators,
+    )) {
+      context.read<HintBloc>().add(
+        const HintDismissRequested(HintIds.healthDiaryPinnedIndicators),
+      );
+    }
+  }
+
+  void _showDiaryPinnedIndicatorsHint() {
+    context.read<HintBloc>().add(
+      const HintShowRequested(HintIds.healthDiaryPinnedIndicators),
+    );
+  }
+
+  void _dismissDiaryPinnedValueHintIfVisible() {
+    if (context.read<HintBloc>().state.isHintVisible(
+      HintIds.healthDiaryPinnedValue,
+    )) {
+      context.read<HintBloc>().add(
+        const HintDismissRequested(HintIds.healthDiaryPinnedValue),
+      );
+    }
+  }
+
+  void _showDiaryPinnedValueHint() {
+    context.read<HintBloc>().add(
+      const HintShowRequested(HintIds.healthDiaryPinnedValue),
+    );
+  }
+
+  void _dismissDiaryPinnedTimeHintIfVisible() {
+    if (context.read<HintBloc>().state.isHintVisible(
+      HintIds.healthDiaryPinnedTime,
+    )) {
+      context.read<HintBloc>().add(
+        const HintDismissRequested(HintIds.healthDiaryPinnedTime),
+      );
+    }
+  }
+
+  void _showDiaryPinnedTimeHint() {
+    context.read<HintBloc>().add(
+      const HintShowRequested(HintIds.healthDiaryPinnedTime),
+    );
+  }
+
+  void _dismissDiaryPinnedSaveHintIfVisible() {
+    if (context.read<HintBloc>().state.isHintVisible(
+      HintIds.healthDiaryPinnedSave,
+    )) {
+      context.read<HintBloc>().add(
+        const HintDismissRequested(HintIds.healthDiaryPinnedSave),
+      );
+    }
+  }
+
+  void _showDiaryPinnedSaveHint() {
+    context.read<HintBloc>().add(
+      const HintShowRequested(HintIds.healthDiaryPinnedSave),
+    );
+  }
+
+  void _dismissDiaryAllIndicatorsHintIfVisible() {
+    if (context.read<HintBloc>().state.isHintVisible(
+      HintIds.healthDiaryAllIndicators,
+    )) {
+      context.read<HintBloc>().add(
+        const HintDismissRequested(HintIds.healthDiaryAllIndicators),
+      );
+    }
+  }
+
+  void _dismissDiaryAllIndicatorsSelectHintIfVisible() {
+    if (context.read<HintBloc>().state.isHintVisible(
+      HintIds.healthDiaryAllIndicatorsSelect,
+    )) {
+      context.read<HintBloc>().add(
+        const HintDismissRequested(HintIds.healthDiaryAllIndicatorsSelect),
+      );
+    }
+  }
+
+  void _showDiaryAllIndicatorsSelectHint(String categoryId) {
+    _activeAllIndicatorsCategoryHint = categoryId;
+    _shouldShowAllIndicatorsCareSaveHint = categoryId == 'care';
+    context.read<HintBloc>().add(
+      const HintShowRequested(HintIds.healthDiaryAllIndicatorsSelect),
+    );
+  }
+
+  void _dismissDiaryPinnedFillHintsIfVisible() {
+    _dismissDiaryPinnedValueHintIfVisible();
+    _dismissDiaryPinnedTimeHintIfVisible();
+    _dismissDiaryPinnedSaveHintIfVisible();
+  }
+
+  void _toggleCategoryAndShowHintIfNeeded({
+    required String categoryId,
+    required bool isExpanded,
+    required VoidCallback toggle,
+  }) {
+    final shouldShowHint =
+        !isExpanded &&
+        _pendingHintAfterCategoryExpandId ==
+            HintIds.healthDiaryAllIndicatorsSelect;
+
+    setState(toggle);
+
+    if (shouldShowHint) {
+      _pendingHintAfterCategoryExpandId = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _showDiaryAllIndicatorsSelectHint(categoryId);
+      });
+    }
+  }
+
+  void _showAllIndicatorsSavedHint() {
+    _allIndicatorsSavedHintTimer?.cancel();
+
+    if (mounted) {
+      setState(() {
+        _isAllIndicatorsSavedHintVisible = false;
+      });
+    }
+
+    _allIndicatorsSavedHintTimer = Timer(const Duration(milliseconds: 220), () {
+      if (!mounted) return;
+
+      setState(() {
+        _isAllIndicatorsSavedHintVisible = true;
+      });
+
+      _allIndicatorsSavedHintTimer = Timer(const Duration(seconds: 2), () {
+        if (!mounted) return;
+        setState(() {
+          _isAllIndicatorsSavedHintVisible = false;
+        });
+      });
+    });
+  }
+
+  void _handleAllIndicatorTap(
+    BuildContext context, {
+    required String categoryId,
+    required String indicatorKey,
+    required String label,
+  }) {
+    final shouldShowCareSaveHint =
+        categoryId == 'care' && _shouldShowAllIndicatorsCareSaveHint;
+
+    _shouldShowAllIndicatorsCareSaveHint = false;
+    _dismissDiaryAllIndicatorsSelectHintIfVisible();
+    _activeAllIndicatorsCategoryHint = null;
+
+    _showIndicatorModal(
+      context,
+      indicatorKey,
+      label,
+      showAllIndicatorsCareSaveHint: shouldShowCareSaveHint,
+    );
+  }
+
+  void _handleDiaryIntroConfirm(Diary? diary) {
+    _dismissDiaryIntroHintIfVisible();
+    if ((diary?.pinnedParameters ?? const []).isNotEmpty) {
+      _showDiaryPinnedIndicatorsHint();
+    }
+  }
+
   /// Загрузка списка доступов к дневнику
   Future<void> _loadDiaryAccess() async {
     if (_isLoadingAccess) {
@@ -930,6 +1143,35 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
       if (mounted) {
         setState(() {
           _isLoadingAccess = false;
+        });
+      }
+    }
+  }
+
+  /// Загрузка владельца дневника (клиента)
+  Future<void> _loadDiaryOwnerClient() async {
+    if (_isLoadingDiaryOwner) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingDiaryOwner = true;
+      _diaryOwnerError = null;
+    });
+
+    try {
+      final clients = await _diaryRepository.getDiaryClients(widget.diaryId);
+      if (mounted) {
+        setState(() {
+          _diaryOwnerClients = clients;
+          _isLoadingDiaryOwner = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingDiaryOwner = false;
+          _diaryOwnerError = e.toString();
         });
       }
     }
@@ -1199,20 +1441,29 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
       setState(() {
         _animatingFromIndex = null;
       });
+
+      if (mounted && _selectedIndicatorIndex == index) {
+        _showDiaryPinnedValueHint();
+      }
     });
   }
 
   /// Закрыть раскрытую карточку с анимацией (одновременно)
   void _closeIndicator() {
     final closingIndex = _selectedIndicatorIndex;
+    _dismissDiaryPinnedFillHintsIfVisible();
 
     setState(() {
       _animatingFromIndex = closingIndex;
       _selectedIndicatorIndex = null;
+      _editedTimes.clear();
     });
 
     _indicatorAnimationController.reset();
     _indicatorAnimationController.forward().then((_) {
+      final pendingHintId = _pendingHintAfterCloseId;
+      _pendingHintAfterCloseId = null;
+
       setState(() {
         _animatingFromIndex = null;
       });
@@ -1226,6 +1477,10 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
           });
         }
       });
+
+      if (mounted && pendingHintId != null) {
+        context.read<HintBloc>().add(HintShowRequested(pendingHintId));
+      }
     });
   }
 
@@ -1282,6 +1537,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
 
   /// Build expandable category card for indicators
   Widget _buildCategoryCard({
+    required String categoryId,
     required String title,
     required List<dynamic> indicators,
     required List<String> fallbackIndicators,
@@ -1313,6 +1569,80 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         subtitle += ' и т.д.';
       }
     }
+
+    final expandedContent = Container(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
+      ),
+      child: Column(
+        children: [
+          const SizedBox(height: 12),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: displayIndicators.length == 1 ? 1 : 2,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
+              childAspectRatio: displayIndicators.length == 1 ? 6 : 2.8,
+            ),
+            itemCount: displayIndicators.length,
+            itemBuilder: (context, index) {
+              final indicatorKey = displayIndicators[index].toString();
+              final label = _getIndicatorLabel(indicatorKey);
+              final isActive = indicators.contains(indicatorKey);
+
+              return GestureDetector(
+                onTap: isActive
+                    ? () => _handleAllIndicatorTap(
+                        context,
+                        categoryId: categoryId,
+                        indicatorKey: indicatorKey,
+                        label: label,
+                      )
+                    : null,
+                child: Opacity(
+                  opacity: isActive ? 1.0 : 0.4,
+                  child: Container(
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: AppConfig.primaryColor.withValues(
+                          alpha: isActive ? 0.5 : 0.2,
+                        ),
+                        width: 2,
+                      ),
+                    ),
+                    child: Text(
+                      label,
+                      style: GoogleFonts.firaSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade800,
+                      ),
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+
+    final shouldShowExpandedHint =
+        _activeAllIndicatorsCategoryHint == categoryId;
 
     return Container(
       decoration: BoxDecoration(
@@ -1377,77 +1707,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
           // Expanded content
           AnimatedCrossFade(
             firstChild: const SizedBox.shrink(),
-            secondChild: Container(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(
-                  bottom: Radius.circular(16),
-                ),
-              ),
-              child: Column(
-                children: [
-                  const SizedBox(height: 12),
-                  GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: displayIndicators.length == 1 ? 1 : 2,
-                      crossAxisSpacing: 8,
-                      mainAxisSpacing: 8,
-                      childAspectRatio: displayIndicators.length == 1 ? 6 : 2.8,
-                    ),
-                    itemCount: displayIndicators.length,
-                    itemBuilder: (context, index) {
-                      final indicatorKey = displayIndicators[index].toString();
-                      final label = _getIndicatorLabel(indicatorKey);
-                      final isActive = indicators.contains(indicatorKey);
-
-                      return GestureDetector(
-                        onTap: isActive
-                            ? () => _showIndicatorModal(
-                                context,
-                                indicatorKey,
-                                label,
-                              )
-                            : null,
-                        child: Opacity(
-                          opacity: isActive ? 1.0 : 0.4,
-                          child: Container(
-                            alignment: Alignment.center,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: AppConfig.primaryColor.withValues(
-                                  alpha: isActive ? 0.5 : 0.2,
-                                ),
-                                width: 2,
-                              ),
-                            ),
-                            child: Text(
-                              label,
-                              style: GoogleFonts.firaSans(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.grey.shade800,
-                              ),
-                              textAlign: TextAlign.center,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
+            secondChild: expandedContent,
             crossFadeState: isExpanded
                 ? CrossFadeState.showSecond
                 : CrossFadeState.showFirst,
@@ -1460,6 +1720,21 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
 
   @override
   Widget build(BuildContext context) {
+    final hintState = context.watch<HintBloc>().state;
+    final activeHintId = hintState.activeHintId;
+    final isDiaryIntroHintVisible = hintState.isHintVisible(
+      HintIds.healthDiaryIntro,
+    );
+    final isDiaryPinnedIndicatorsHintVisible = hintState.isHintVisible(
+      HintIds.healthDiaryPinnedIndicators,
+    );
+    final isDiaryAllIndicatorsHintVisible = hintState.isHintVisible(
+      HintIds.healthDiaryAllIndicators,
+    );
+    final isDiaryAllIndicatorsSelectHintVisible = hintState.isHintVisible(
+      HintIds.healthDiaryAllIndicatorsSelect,
+    );
+
     return MultiBlocProvider(
       providers: [
         BlocProvider(
@@ -1490,7 +1765,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                     height: 24,
                     fit: BoxFit.contain,
                   ),
-                  onPressed: () => context.go('/diaries'),
+                  onPressed: () => context.pop(),
                 ),
                 title: Text(
                   'Дневник здоровья',
@@ -1518,7 +1793,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                     height: 24,
                     fit: BoxFit.contain,
                   ),
-                  onPressed: () => context.go('/diaries'),
+                  onPressed: () => context.pop(),
                 ),
                 title: Text(
                   'Дневник здоровья',
@@ -1592,152 +1867,195 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
               // Длина контроллера зависит от роли: 4 для сиделок, 5 для остальных
               final tabLength = isCaregiver ? 4 : 5;
 
+              final showPinnedIndicatorsHint =
+                  isDiaryPinnedIndicatorsHintVisible &&
+                  diary != null &&
+                  diary.pinnedParameters.isNotEmpty &&
+                  widget.initialTabIndex == 0;
+              final showPinnedFillHint =
+                  _selectedIndicatorIndex != null &&
+                  widget.initialTabIndex == 0 &&
+                  (activeHintId == HintIds.healthDiaryPinnedValue ||
+                      activeHintId == HintIds.healthDiaryPinnedTime ||
+                      activeHintId == HintIds.healthDiaryPinnedSave);
+              final showAllIndicatorsHint =
+                  isDiaryAllIndicatorsHintVisible &&
+                  _selectedIndicatorIndex == null &&
+                  widget.initialTabIndex == 0;
+              final showAllIndicatorsSelectHint =
+                  isDiaryAllIndicatorsSelectHintVisible &&
+                  _activeAllIndicatorsCategoryHint != null &&
+                  _selectedIndicatorIndex == null &&
+                  widget.initialTabIndex == 0;
+
               return DefaultTabController(
                 length: tabLength,
-                child: Scaffold(
-                  backgroundColor: const Color(0xFFF7F7F8),
-                  appBar: AppBar(
-                    backgroundColor: Colors.white,
-                    elevation: 0,
-                    leading: IconButton(
-                      icon: Image.asset(
-                        AppIcons.back,
-                        width: 24,
-                        height: 24,
-                        fit: BoxFit.contain,
-                      ),
-                      onPressed: () => context.go('/diaries'),
-                    ),
-                    title: Text(
-                      diary?.patientName ?? 'Дневник здоровья',
-                      style: GoogleFonts.firaSans(
-                        color: Colors.grey.shade900,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    bottom: PreferredSize(
-                      preferredSize: const Size.fromHeight(48),
-                      child: Container(
-                        color: Colors.white,
-                        child: BlocBuilder<AuthBloc, AuthState>(
-                          builder: (context, authState) {
-                            // Определяем, является ли пользователь сиделкой
-                            final isOrganizationCaregiver =
-                                authState is AuthAuthenticated &&
-                                authState.user.hasRole('caregiver');
-                            final isClientCaregiver =
-                                authState is AuthAuthenticated &&
-                                authState.user.accountType == 'client' &&
-                                authState.user.hasRole('caregiver');
-                            // Проверка на account_type doctor и caregiver
-                            final isDoctorOrCaregiver =
-                                authState is AuthAuthenticated &&
-                                (authState.user.accountType == 'doctor' ||
-                                    authState.user.accountType == 'caregiver');
+                initialIndex: widget.initialTabIndex,
+                child: Stack(
+                  children: [
+                    Scaffold(
+                      backgroundColor: const Color(0xFFF7F7F8),
+                      appBar: AppBar(
+                        backgroundColor: Colors.white,
+                        elevation: 0,
+                        leading: IconButton(
+                          icon: Image.asset(
+                            AppIcons.back,
+                            width: 24,
+                            height: 24,
+                            fit: BoxFit.contain,
+                          ),
+                          onPressed: () => context.pop(),
+                        ),
+                        title: Text(
+                          diary?.patientName ?? 'Дневник здоровья',
+                          style: GoogleFonts.firaSans(
+                            color: Colors.grey.shade900,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        bottom: PreferredSize(
+                          preferredSize: const Size.fromHeight(48),
+                          child: Container(
+                            color: Colors.white,
+                            child: BlocBuilder<AuthBloc, AuthState>(
+                              builder: (context, authState) {
+                                final isOrganizationCaregiver =
+                                    authState is AuthAuthenticated &&
+                                    authState.user.hasRole('caregiver');
+                                final isClientCaregiver =
+                                    authState is AuthAuthenticated &&
+                                    authState.user.accountType == 'client' &&
+                                    authState.user.hasRole('caregiver');
+                                final isDoctorOrCaregiver =
+                                    authState is AuthAuthenticated &&
+                                    (authState.user.accountType == 'doctor' ||
+                                        authState.user.accountType ==
+                                            'caregiver');
 
-                            final isCaregiver =
-                                isOrganizationCaregiver ||
-                                isClientCaregiver ||
-                                isDoctorOrCaregiver;
+                                final isCaregiver =
+                                    isOrganizationCaregiver ||
+                                    isClientCaregiver ||
+                                    isDoctorOrCaregiver;
 
-                            // Формируем список табов динамически
-                            final tabs = [
-                              const Tab(text: 'Дневник'),
-                              const Tab(text: 'Будильник'),
-                              const Tab(text: 'История'),
-                              const Tab(text: 'Маршрутный лист'),
-                              if (!isCaregiver) const Tab(text: 'Клиент'),
-                            ];
+                                final tabs = [
+                                  const Tab(text: 'Дневник'),
+                                  const Tab(text: 'Будильник'),
+                                  const Tab(text: 'История'),
+                                  const Tab(text: 'Маршрутный лист'),
+                                  if (!isCaregiver) const Tab(text: 'Клиент'),
+                                ];
 
-                            return Stack(
-                              children: [
-                                TabBar(
-                                  isScrollable: true,
-                                  padding: const EdgeInsets.only(
-                                    left: 16,
-                                    right: 32,
-                                  ),
-                                  tabAlignment: TabAlignment.start,
-                                  indicatorColor: AppConfig.primaryColor,
-                                  indicatorWeight: 2,
-                                  labelColor: Colors.grey.shade900,
-                                  unselectedLabelColor: Colors.grey.shade600,
-                                  labelStyle: GoogleFonts.firaSans(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  unselectedLabelStyle: GoogleFonts.firaSans(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w400,
-                                  ),
-                                  tabs: tabs,
-                                ),
-                                Positioned(
-                                  right: 0,
-                                  top: 0,
-                                  bottom: 0,
-                                  child: IgnorePointer(
-                                    child: Container(
-                                      width: 48,
-                                      decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          begin: Alignment.centerLeft,
-                                          end: Alignment.centerRight,
-                                          colors: [
-                                            Colors.white.withOpacity(0.0),
-                                            Colors.white,
-                                          ],
-                                          stops: const [0.0, 0.4],
-                                        ),
+                                return Stack(
+                                  children: [
+                                    TabBar(
+                                      isScrollable: true,
+                                      padding: const EdgeInsets.only(
+                                        left: 16,
+                                        right: 32,
                                       ),
-                                      child: Align(
-                                        alignment: Alignment.centerRight,
-                                        child: Padding(
-                                          padding: const EdgeInsets.only(
-                                            right: 8,
+                                      tabAlignment: TabAlignment.start,
+                                      indicatorColor: AppConfig.primaryColor,
+                                      indicatorWeight: 2,
+                                      labelColor: Colors.grey.shade900,
+                                      unselectedLabelColor:
+                                          Colors.grey.shade600,
+                                      labelStyle: GoogleFonts.firaSans(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                      unselectedLabelStyle:
+                                          GoogleFonts.firaSans(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w400,
                                           ),
-                                          child: Icon(
-                                            Icons.chevron_right,
-                                            color: Colors.black,
-                                            size: 24,
+                                      tabs: tabs,
+                                    ),
+                                    Positioned(
+                                      right: 0,
+                                      top: 0,
+                                      bottom: 0,
+                                      child: IgnorePointer(
+                                        child: Container(
+                                          width: 48,
+                                          decoration: BoxDecoration(
+                                            gradient: LinearGradient(
+                                              begin: Alignment.centerLeft,
+                                              end: Alignment.centerRight,
+                                              colors: [
+                                                Colors.white.withOpacity(0.0),
+                                                Colors.white,
+                                              ],
+                                              stops: const [0.0, 0.4],
+                                            ),
+                                          ),
+                                          child: Align(
+                                            alignment: Alignment.centerRight,
+                                            child: Padding(
+                                              padding: const EdgeInsets.only(
+                                                right: 8,
+                                              ),
+                                              child: Icon(
+                                                Icons.chevron_right,
+                                                color: Colors.black,
+                                                size: 24,
+                                              ),
+                                            ),
                                           ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                ),
-                              ],
-                            );
-                          },
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
                         ),
                       ),
+                      body: BlocBuilder<AuthBloc, AuthState>(
+                        builder: (context, authState) {
+                          final isOrganizationCaregiver =
+                              authState is AuthAuthenticated &&
+                              authState.user.hasRole('caregiver');
+                          final isClientCaregiver =
+                              authState is AuthAuthenticated &&
+                              authState.user.accountType == 'client' &&
+                              authState.user.hasRole('caregiver');
+                          final isDoctorOrCaregiver =
+                              authState is AuthAuthenticated &&
+                              (authState.user.accountType == 'doctor' ||
+                                  authState.user.accountType == 'caregiver');
+                          final isCaregiver =
+                              isOrganizationCaregiver ||
+                              isClientCaregiver ||
+                              isDoctorOrCaregiver;
+
+                          final tabViews = [
+                            _buildDiaryTab(context, diary),
+                            _buildAlarmTab(context),
+                            _buildHistoryTab(context, diary),
+                            _buildRouteSheetTab(context),
+                            if (!isCaregiver) _buildClientTab(context),
+                          ];
+
+                          return TabBarView(children: tabViews);
+                        },
+                      ),
                     ),
-                  ),
-                  body: BlocBuilder<AuthBloc, AuthState>(
-                    builder: (context, authState) {
-                      // Определяем, является ли пользователь сиделкой
-                      final isOrganizationCaregiver =
-                          authState is AuthAuthenticated &&
-                          authState.user.hasRole('caregiver');
-                      final isClientCaregiver =
-                          authState is AuthAuthenticated &&
-                          authState.user.accountType == 'client' &&
-                          authState.user.hasRole('caregiver');
-                      final isCaregiver =
-                          isOrganizationCaregiver || isClientCaregiver;
-
-                      // Формируем список view динамически
-                      final tabViews = [
-                        _buildDiaryTab(context, diary),
-                        _buildAlarmTab(context),
-                        _buildHistoryTab(context, diary),
-                        _buildRouteSheetTab(context),
-                        if (!isCaregiver) _buildClientTab(context),
-                      ];
-
-                      return TabBarView(children: tabViews);
-                    },
-                  ),
+                    if (isDiaryIntroHintVisible &&
+                        diary != null &&
+                        widget.initialTabIndex == 0)
+                      _HealthDiaryHintOverlay(
+                        child: _HealthDiaryIntroTooltip(
+                          onConfirm: () => _handleDiaryIntroConfirm(diary),
+                        ),
+                      ),
+                    if (_isAllIndicatorsSavedHintVisible &&
+                        widget.initialTabIndex == 0)
+                      const _HealthDiaryTopSuccessOverlay(
+                        child: _HealthDiarySavedTooltip(),
+                      ),
+                  ],
                 ),
               );
             },
@@ -1766,480 +2084,535 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Pinned indicators section
-                    Text(
-                      'Закрепленные показатели',
-                      style: GoogleFonts.firaSans(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.grey.shade900,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    // Show expanded card or horizontal list with smooth simultaneous animation
-                    AnimatedBuilder(
-                      animation: _indicatorAnimationController,
-                      builder: (context, child) {
-                        final animValue = _indicatorExpandAnimation.value;
-                        final isExpanding = _selectedIndicatorIndex != null;
-                        final isClosing =
-                            !isExpanding && _animatingFromIndex != null;
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          'Закрепленные показатели',
+                          style: GoogleFonts.firaSans(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.grey.shade900,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        AnimatedBuilder(
+                          animation: _indicatorAnimationController,
+                          builder: (context, child) {
+                            final animValue = _indicatorExpandAnimation.value;
+                            final isExpanding = _selectedIndicatorIndex != null;
+                            final isClosing =
+                                !isExpanding && _animatingFromIndex != null;
 
-                        // Плавные кривые для разных эффектов
-                        final fadeCurve = Curves.easeOut;
-                        final slideCurve = Curves.easeInOutCubic;
-                        final scaleCurve = Curves.easeOutBack;
+                            final fadeCurve = Curves.easeOut;
+                            final slideCurve = Curves.easeInOutCubic;
+                            final scaleCurve = Curves.easeOutBack;
 
-                        // Вычисляем значения с разными кривыми для более интересной анимации
-                        final fadeProgress = fadeCurve.transform(animValue);
-                        final slideProgress = slideCurve.transform(animValue);
-                        final scaleProgress = scaleCurve.transform(animValue);
+                            final fadeProgress = fadeCurve.transform(animValue);
+                            final slideProgress = slideCurve.transform(
+                              animValue,
+                            );
+                            final scaleProgress = scaleCurve.transform(
+                              animValue,
+                            );
 
-                        // During animation, show both states with Stack
-                        if (_animatingFromIndex != null ||
-                            (isExpanding && animValue < 1.0)) {
-                          return Stack(
-                            clipBehavior: Clip.none,
-                            children: [
-                              // Cards list (fading out and sliding right when expanding, fading in when closing)
-                              if (pinnedParameters.isNotEmpty)
-                                Opacity(
-                                  opacity: isExpanding
-                                      ? (1.0 - fadeProgress).clamp(0.0, 1.0)
-                                      : fadeProgress.clamp(0.0, 1.0),
-                                  child: Transform.translate(
-                                    offset: Offset(
-                                      isExpanding
-                                          ? slideProgress * 80
-                                          : (1.0 - slideProgress) * 80,
-                                      0,
-                                    ),
-                                    child: Transform.scale(
-                                      scale: isExpanding
-                                          ? 1.0 - (fadeProgress * 0.15)
-                                          : 0.85 + (fadeProgress * 0.15),
-                                      alignment: Alignment.center,
-                                      child: Row(
-                                        children: List.generate(pinnedParameters.length, (
-                                          index,
-                                        ) {
-                                          final param = pinnedParameters[index];
-                                          return Expanded(
-                                            child: Container(
-                                              height: 260,
-                                              margin: EdgeInsets.only(
-                                                right:
-                                                    index <
-                                                        pinnedParameters
-                                                                .length -
-                                                            1
-                                                    ? 8
-                                                    : 0,
-                                              ),
-                                              padding: const EdgeInsets.all(12),
-                                              decoration: BoxDecoration(
-                                                gradient: LinearGradient(
-                                                  colors: [
-                                                    const Color(0xFF61B4C6),
-                                                    const Color(0xFF317799),
-                                                  ],
-                                                  begin: Alignment.topLeft,
-                                                  end: Alignment.bottomRight,
-                                                ),
-                                                borderRadius:
-                                                    BorderRadius.circular(12),
-                                                boxShadow: [
-                                                  BoxShadow(
-                                                    color: Colors.black
-                                                        .withOpacity(
-                                                          0.06 *
-                                                              (1.0 -
-                                                                  fadeProgress),
+                            if (_animatingFromIndex != null ||
+                                (isExpanding && animValue < 1.0)) {
+                              return Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  if (pinnedParameters.isNotEmpty)
+                                    Opacity(
+                                      opacity: isExpanding
+                                          ? (1.0 - fadeProgress).clamp(0.0, 1.0)
+                                          : fadeProgress.clamp(0.0, 1.0),
+                                      child: Transform.translate(
+                                        offset: Offset(
+                                          isExpanding
+                                              ? slideProgress * 80
+                                              : (1.0 - slideProgress) * 80,
+                                          0,
+                                        ),
+                                        child: Transform.scale(
+                                          scale: isExpanding
+                                              ? 1.0 - (fadeProgress * 0.15)
+                                              : 0.85 + (fadeProgress * 0.15),
+                                          alignment: Alignment.center,
+                                          child: Row(
+                                            children: List.generate(pinnedParameters.length, (
+                                              index,
+                                            ) {
+                                              final param =
+                                                  pinnedParameters[index];
+                                              return Expanded(
+                                                child: Container(
+                                                  height: 260,
+                                                  margin: EdgeInsets.only(
+                                                    right:
+                                                        index <
+                                                            pinnedParameters
+                                                                    .length -
+                                                                1
+                                                        ? 8
+                                                        : 0,
+                                                  ),
+                                                  padding: const EdgeInsets.all(
+                                                    12,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    gradient: LinearGradient(
+                                                      colors: [
+                                                        const Color(0xFF61B4C6),
+                                                        const Color(0xFF317799),
+                                                      ],
+                                                      begin: Alignment.topLeft,
+                                                      end:
+                                                          Alignment.bottomRight,
+                                                    ),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          12,
                                                         ),
-                                                    blurRadius: 12,
-                                                    offset: const Offset(0, 4),
-                                                  ),
-                                                ],
-                                              ),
-                                              child: Column(
-                                                mainAxisAlignment:
-                                                    MainAxisAlignment
-                                                        .spaceBetween,
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.center,
-                                                children: [
-                                                  Text(
-                                                    _getIndicatorLabel(
-                                                      param.key,
-                                                    ),
-                                                    style: GoogleFonts.firaSans(
-                                                      fontSize: 14,
-                                                      fontWeight:
-                                                          FontWeight.w700,
-                                                      color: Colors.white,
-                                                    ),
-                                                    textAlign: TextAlign.center,
-                                                    maxLines: 2,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                  ),
-                                                  const SizedBox(height: 8),
-                                                  _buildIndicatorValueCircle(
-                                                    _getLastValue(
-                                                      diary,
-                                                      param.key,
-                                                    ),
-                                                  ),
-                                                  const SizedBox(height: 10),
-                                                  Center(
-                                                    child: Text(
-                                                      _getDisplayTime(
-                                                        _editedTimes[param
-                                                                .key] ??
-                                                            param.times,
-                                                      ),
-                                                      style:
-                                                          GoogleFonts.firaSans(
-                                                            fontSize: 11,
-                                                            color: Colors.white,
-                                                            fontWeight:
-                                                                FontWeight.w800,
-                                                          ),
-                                                      textAlign:
-                                                          TextAlign.center,
-                                                      maxLines: 2,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                    ),
-                                                  ),
-                                                  SizedBox(
-                                                    width: double.infinity,
-                                                    child: ElevatedButton(
-                                                      style: ElevatedButton.styleFrom(
-                                                        backgroundColor: Colors
-                                                            .grey
-                                                            .shade800,
-                                                        padding:
-                                                            const EdgeInsets.symmetric(
-                                                              vertical: 8,
+                                                    boxShadow: [
+                                                      BoxShadow(
+                                                        color: Colors.black
+                                                            .withOpacity(
+                                                              0.06 *
+                                                                  (1.0 -
+                                                                      fadeProgress),
                                                             ),
-                                                        shape: RoundedRectangleBorder(
-                                                          borderRadius:
-                                                              BorderRadius.circular(
-                                                                12,
-                                                              ),
+                                                        blurRadius: 12,
+                                                        offset: const Offset(
+                                                          0,
+                                                          4,
                                                         ),
-                                                        elevation: 0,
                                                       ),
-                                                      onPressed: () =>
-                                                          _selectIndicator(
-                                                            index,
-                                                          ),
-                                                      child: Text(
-                                                        'Заполнить',
+                                                    ],
+                                                  ),
+                                                  child: Column(
+                                                    mainAxisAlignment:
+                                                        MainAxisAlignment
+                                                            .spaceBetween,
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .center,
+                                                    children: [
+                                                      Text(
+                                                        _getIndicatorLabel(
+                                                          param.key,
+                                                        ),
                                                         style:
                                                             GoogleFonts.firaSans(
-                                                              fontSize: 11,
+                                                              fontSize: 14,
                                                               fontWeight:
                                                                   FontWeight
-                                                                      .w600,
+                                                                      .w700,
                                                               color:
                                                                   Colors.white,
                                                             ),
+                                                        textAlign:
+                                                            TextAlign.center,
+                                                        maxLines: 2,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
                                                       ),
-                                                    ),
+                                                      const SizedBox(height: 8),
+                                                      _buildIndicatorValueCircle(
+                                                        _getLastValue(
+                                                          diary,
+                                                          param.key,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(
+                                                        height: 10,
+                                                      ),
+                                                      Center(
+                                                        child: Text(
+                                                          _getDisplayTime(
+                                                            _editedTimes[param
+                                                                    .key] ??
+                                                                param.times,
+                                                          ),
+                                                          style:
+                                                              GoogleFonts.firaSans(
+                                                                fontSize: 11,
+                                                                color: Colors
+                                                                    .white,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w800,
+                                                              ),
+                                                          textAlign:
+                                                              TextAlign.center,
+                                                          maxLines: 2,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                        ),
+                                                      ),
+                                                      SizedBox(
+                                                        width: double.infinity,
+                                                        child: ElevatedButton(
+                                                          style: ElevatedButton.styleFrom(
+                                                            backgroundColor:
+                                                                Colors
+                                                                    .grey
+                                                                    .shade800,
+                                                            padding:
+                                                                const EdgeInsets.symmetric(
+                                                                  vertical: 8,
+                                                                ),
+                                                            shape: RoundedRectangleBorder(
+                                                              borderRadius:
+                                                                  BorderRadius.circular(
+                                                                    12,
+                                                                  ),
+                                                            ),
+                                                            elevation: 0,
+                                                          ),
+                                                          onPressed: () =>
+                                                              _selectIndicator(
+                                                                index,
+                                                              ),
+                                                          child: Text(
+                                                            'Заполнить',
+                                                            style:
+                                                                GoogleFonts.firaSans(
+                                                                  fontSize: 11,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .w600,
+                                                                  color: Colors
+                                                                      .white,
+                                                                ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
                                                   ),
-                                                ],
+                                                ),
+                                              );
+                                            }),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  if (isExpanding || isClosing)
+                                    Opacity(
+                                      opacity: isExpanding
+                                          ? fadeProgress.clamp(0.0, 1.0)
+                                          : (1.0 - fadeProgress).clamp(
+                                              0.0,
+                                              1.0,
+                                            ),
+                                      child: Transform.translate(
+                                        offset: Offset(
+                                          isExpanding
+                                              ? -100 * (1.0 - slideProgress)
+                                              : -100 * slideProgress,
+                                          0,
+                                        ),
+                                        child: Transform.scale(
+                                          scale: isExpanding
+                                              ? 0.7 + (scaleProgress * 0.3)
+                                              : 1.0 - (scaleProgress * 0.3),
+                                          alignment: Alignment.centerLeft,
+                                          child: Transform.rotate(
+                                            angle: isExpanding
+                                                ? (1.0 - scaleProgress) * 0.05
+                                                : scaleProgress * 0.05,
+                                            alignment: Alignment.centerLeft,
+                                            child: _buildExpandedIndicatorCard(
+                                              context,
+                                              isExpanding
+                                                  ? _selectedIndicatorIndex!
+                                                  : _animatingFromIndex!,
+                                              pinnedParameters,
+                                              diary,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              );
+                            }
+
+                            if (_selectedIndicatorIndex != null) {
+                              return _buildExpandedIndicatorCard(
+                                context,
+                                _selectedIndicatorIndex!,
+                                pinnedParameters,
+                                diary,
+                              );
+                            } else if (pinnedParameters.isNotEmpty) {
+                              return Row(
+                                children: List.generate(
+                                  pinnedParameters.length,
+                                  (index) {
+                                    final param = pinnedParameters[index];
+                                    return Expanded(
+                                      child: Container(
+                                        height: 260,
+                                        margin: EdgeInsets.only(
+                                          right:
+                                              index <
+                                                  pinnedParameters.length - 1
+                                              ? 8
+                                              : 0,
+                                        ),
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            colors: [
+                                              const Color(0xFF61B4C6),
+                                              const Color(0xFF317799),
+                                            ],
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black.withOpacity(
+                                                0.06,
+                                              ),
+                                              blurRadius: 12,
+                                              offset: const Offset(0, 4),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.center,
+                                          children: [
+                                            Text(
+                                              _getIndicatorLabel(param.key),
+                                              style: GoogleFonts.firaSans(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w700,
+                                                color: Colors.white,
+                                              ),
+                                              textAlign: TextAlign.center,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            const SizedBox(height: 8),
+                                            _buildIndicatorValueCircle(
+                                              _getLastValue(diary, param.key),
+                                            ),
+                                            const SizedBox(height: 10),
+                                            Center(
+                                              child: Text(
+                                                _getDisplayTime(
+                                                  _editedTimes[param.key] ??
+                                                      param.times,
+                                                ),
+                                                style: GoogleFonts.firaSans(
+                                                  fontSize: 11,
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                                textAlign: TextAlign.center,
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
                                               ),
                                             ),
-                                          );
-                                        }),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              // Expanded card (fading in and expanding from left when expanding, fading out when closing)
-                              if (isExpanding || isClosing)
-                                Opacity(
-                                  opacity: isExpanding
-                                      ? fadeProgress.clamp(0.0, 1.0)
-                                      : (1.0 - fadeProgress).clamp(0.0, 1.0),
-                                  child: Transform.translate(
-                                    offset: Offset(
-                                      isExpanding
-                                          ? -100 * (1.0 - slideProgress)
-                                          : -100 * slideProgress,
-                                      0,
-                                    ),
-                                    child: Transform.scale(
-                                      scale: isExpanding
-                                          ? 0.7 + (scaleProgress * 0.3)
-                                          : 1.0 - (scaleProgress * 0.3),
-                                      alignment: Alignment.centerLeft,
-                                      child: Transform.rotate(
-                                        angle: isExpanding
-                                            ? (1.0 - scaleProgress) * 0.05
-                                            : scaleProgress * 0.05,
-                                        alignment: Alignment.centerLeft,
-                                        child: _buildExpandedIndicatorCard(
-                                          context,
-                                          isExpanding
-                                              ? _selectedIndicatorIndex!
-                                              : _animatingFromIndex!,
-                                          pinnedParameters,
-                                          diary,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          );
-                        }
-
-                        // Static states (no animation in progress)
-                        if (_selectedIndicatorIndex != null) {
-                          return _buildExpandedIndicatorCard(
-                            context,
-                            _selectedIndicatorIndex!,
-                            pinnedParameters,
-                            diary,
-                          );
-                        } else if (pinnedParameters.isNotEmpty) {
-                          return Row(
-                            children: List.generate(pinnedParameters.length, (
-                              index,
-                            ) {
-                              final param = pinnedParameters[index];
-                              return Expanded(
-                                child: Container(
-                                  height: 260,
-                                  margin: EdgeInsets.only(
-                                    right: index < pinnedParameters.length - 1
-                                        ? 8
-                                        : 0,
-                                  ),
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      colors: [
-                                        const Color(0xFF61B4C6),
-                                        const Color(0xFF317799),
-                                      ],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
-                                    borderRadius: BorderRadius.circular(12),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.06),
-                                        blurRadius: 12,
-                                        offset: const Offset(0, 4),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Column(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.center,
-                                    children: [
-                                      Text(
-                                        _getIndicatorLabel(param.key),
-                                        style: GoogleFonts.firaSans(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w700,
-                                          color: Colors.white,
-                                        ),
-                                        textAlign: TextAlign.center,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      const SizedBox(height: 8),
-                                      _buildIndicatorValueCircle(
-                                        _getLastValue(diary, param.key),
-                                      ),
-                                      const SizedBox(height: 10),
-                                      Center(
-                                        child: Text(
-                                          _getDisplayTime(
-                                            _editedTimes[param.key] ??
-                                                param.times,
-                                          ),
-                                          style: GoogleFonts.firaSans(
-                                            fontSize: 11,
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w800,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                      SizedBox(
-                                        width: double.infinity,
-                                        child: ElevatedButton(
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor:
-                                                Colors.grey.shade800,
-                                            padding: const EdgeInsets.symmetric(
-                                              vertical: 8,
+                                            SizedBox(
+                                              width: double.infinity,
+                                              child: ElevatedButton(
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor:
+                                                      Colors.grey.shade800,
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        vertical: 8,
+                                                      ),
+                                                  shape: RoundedRectangleBorder(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          12,
+                                                        ),
+                                                  ),
+                                                  elevation: 0,
+                                                ),
+                                                onPressed: () =>
+                                                    _selectIndicator(index),
+                                                child: Text(
+                                                  'Заполнить',
+                                                  style: GoogleFonts.firaSans(
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: Colors.white,
+                                                  ),
+                                                ),
+                                              ),
                                             ),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                            ),
-                                            elevation: 0,
-                                          ),
-                                          onPressed: () =>
-                                              _selectIndicator(index),
-                                          child: Text(
-                                            'Заполнить',
-                                            style: GoogleFonts.firaSans(
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.w600,
-                                              color: Colors.white,
-                                            ),
-                                          ),
+                                          ],
                                         ),
                                       ),
-                                    ],
-                                  ),
+                                    );
+                                  },
                                 ),
                               );
-                            }),
-                          );
-                        }
-                        return const SizedBox.shrink();
-                      },
+                            }
+                            return const SizedBox.shrink();
+                          },
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 16),
                     // Test notification button for pinned parameters
                     // All indicators section
-                    Text(
-                      'Все показатели',
-                      style: GoogleFonts.firaSans(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.grey.shade900,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    // Settings card - shows diary settings (all_indicators)
-                    Builder(
-                      builder: (context) {
-                        // Получаем all_indicators из settings
-                        final settings = diary?.settings;
-                        final allIndicators = _normalizeIndicatorKeys(
-                          settings?['all_indicators'] ??
-                              settings?['allIndicators'],
-                        );
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          'Все показатели',
+                          style: GoogleFonts.firaSans(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.grey.shade900,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Builder(
+                          builder: (context) {
+                            final settings = diary?.settings;
+                            final allIndicators = _normalizeIndicatorKeys(
+                              settings?['all_indicators'] ??
+                                  settings?['allIndicators'],
+                            );
 
-                        // Получаем список закрепленных показателей
-                        final pinnedKeys =
-                            diary?.pinnedParameters.map((p) => p.key).toSet() ??
-                            {};
+                            final pinnedKeys =
+                                diary?.pinnedParameters
+                                    .map((p) => p.key)
+                                    .toSet() ??
+                                {};
 
-                        // Исключаем закрепленные показатели из "Все показатели"
-                        final availableIndicators = allIndicators
-                            .where((e) => !pinnedKeys.contains(e))
-                            .toList();
+                            final availableIndicators = allIndicators
+                                .where((e) => !pinnedKeys.contains(e))
+                                .toList();
 
-                        // Фильтруем показатели по категориям
-                        final careIndicators = availableIndicators
-                            .where((e) => _careIndicatorKeys.contains(e))
-                            .toList();
-                        final physicalIndicators = availableIndicators
-                            .where((e) => _physicalIndicatorKeys.contains(e))
-                            .toList();
-                        final excretionIndicators = availableIndicators
-                            .where((e) => _excretionIndicatorKeys.contains(e))
-                            .toList();
-                        final symptomIndicators = availableIndicators
-                            .where((e) => _symptomIndicatorKeys.contains(e))
-                            .toList();
-                        final customIndicators = availableIndicators
-                            .where(
-                              (e) =>
-                                  !_careIndicatorKeys.contains(e) &&
-                                  !_physicalIndicatorKeys.contains(e) &&
-                                  !_excretionIndicatorKeys.contains(e) &&
-                                  !_symptomIndicatorKeys.contains(e),
-                            )
-                            .toList();
+                            final careIndicators = availableIndicators
+                                .where((e) => _careIndicatorKeys.contains(e))
+                                .toList();
+                            final physicalIndicators = availableIndicators
+                                .where(
+                                  (e) => _physicalIndicatorKeys.contains(e),
+                                )
+                                .toList();
+                            final excretionIndicators = availableIndicators
+                                .where(
+                                  (e) => _excretionIndicatorKeys.contains(e),
+                                )
+                                .toList();
+                            final symptomIndicators = availableIndicators
+                                .where((e) => _symptomIndicatorKeys.contains(e))
+                                .toList();
+                            final customIndicators = availableIndicators
+                                .where(
+                                  (e) =>
+                                      !_careIndicatorKeys.contains(e) &&
+                                      !_physicalIndicatorKeys.contains(e) &&
+                                      !_excretionIndicatorKeys.contains(e) &&
+                                      !_symptomIndicatorKeys.contains(e),
+                                )
+                                .toList();
 
-                        return Column(
-                          children: [
-                            // Показатели ухода
-                            _buildCategoryCard(
-                              title: 'Показатели ухода',
-                              indicators: careIndicators,
-                              fallbackIndicators: _careIndicatorKeys,
-                              isExpanded: _isCareExpanded,
-                              onToggle: () => setState(
-                                () => _isCareExpanded = !_isCareExpanded,
-                              ),
-                              context: context,
-                            ),
-                            const SizedBox(height: 12),
-
-                            // Физические показатели
-                            _buildCategoryCard(
-                              title: 'Физические показатели',
-                              indicators: physicalIndicators,
-                              fallbackIndicators: _physicalIndicatorKeys,
-                              isExpanded: _isPhysicalExpanded,
-                              onToggle: () => setState(
-                                () =>
-                                    _isPhysicalExpanded = !_isPhysicalExpanded,
-                              ),
-                              context: context,
-                            ),
-                            const SizedBox(height: 12),
-
-                            // Выделение мочи и кала
-                            _buildCategoryCard(
-                              title: 'Выделение мочи и кала',
-                              indicators: excretionIndicators,
-                              fallbackIndicators: _excretionIndicatorKeys,
-                              isExpanded: _isExcretionExpanded,
-                              onToggle: () => setState(
-                                () => _isExcretionExpanded =
-                                    !_isExcretionExpanded,
-                              ),
-                              context: context,
-                            ),
-                            const SizedBox(height: 12),
-
-                            // Симптомы
-                            _buildCategoryCard(
-                              title: 'Симптомы',
-                              indicators: symptomIndicators,
-                              fallbackIndicators: _symptomIndicatorKeys,
-                              isExpanded: _isSymptomsExpanded,
-                              onToggle: () => setState(
-                                () =>
-                                    _isSymptomsExpanded = !_isSymptomsExpanded,
-                              ),
-                              context: context,
-                            ),
-                            if (customIndicators.isNotEmpty) ...[
-                              const SizedBox(height: 12),
-                              _buildCategoryCard(
-                                title: 'Дополнительные показатели',
-                                indicators: customIndicators,
-                                fallbackIndicators: const [],
-                                isExpanded: _isCustomIndicatorsExpanded,
-                                onToggle: () => setState(
-                                  () => _isCustomIndicatorsExpanded =
-                                      !_isCustomIndicatorsExpanded,
+                            return Column(
+                              children: [
+                                _buildCategoryCard(
+                                  categoryId: 'care',
+                                  title: 'Показатели ухода',
+                                  indicators: careIndicators,
+                                  fallbackIndicators: _careIndicatorKeys,
+                                  isExpanded: _isCareExpanded,
+                                  onToggle: () =>
+                                      _toggleCategoryAndShowHintIfNeeded(
+                                        categoryId: 'care',
+                                        isExpanded: _isCareExpanded,
+                                        toggle: () =>
+                                            _isCareExpanded = !_isCareExpanded,
+                                      ),
+                                  context: context,
                                 ),
-                                context: context,
-                              ),
-                            ],
-                          ],
-                        );
-                      },
+                                const SizedBox(height: 12),
+                                _buildCategoryCard(
+                                  categoryId: 'physical',
+                                  title: 'Физические показатели',
+                                  indicators: physicalIndicators,
+                                  fallbackIndicators: _physicalIndicatorKeys,
+                                  isExpanded: _isPhysicalExpanded,
+                                  onToggle: () =>
+                                      _toggleCategoryAndShowHintIfNeeded(
+                                        categoryId: 'physical',
+                                        isExpanded: _isPhysicalExpanded,
+                                        toggle: () => _isPhysicalExpanded =
+                                            !_isPhysicalExpanded,
+                                      ),
+                                  context: context,
+                                ),
+                                const SizedBox(height: 12),
+                                _buildCategoryCard(
+                                  categoryId: 'excretion',
+                                  title: 'Выделение мочи и кала',
+                                  indicators: excretionIndicators,
+                                  fallbackIndicators: _excretionIndicatorKeys,
+                                  isExpanded: _isExcretionExpanded,
+                                  onToggle: () =>
+                                      _toggleCategoryAndShowHintIfNeeded(
+                                        categoryId: 'excretion',
+                                        isExpanded: _isExcretionExpanded,
+                                        toggle: () => _isExcretionExpanded =
+                                            !_isExcretionExpanded,
+                                      ),
+                                  context: context,
+                                ),
+                                const SizedBox(height: 12),
+                                _buildCategoryCard(
+                                  categoryId: 'symptoms',
+                                  title: 'Симптомы',
+                                  indicators: symptomIndicators,
+                                  fallbackIndicators: _symptomIndicatorKeys,
+                                  isExpanded: _isSymptomsExpanded,
+                                  onToggle: () =>
+                                      _toggleCategoryAndShowHintIfNeeded(
+                                        categoryId: 'symptoms',
+                                        isExpanded: _isSymptomsExpanded,
+                                        toggle: () => _isSymptomsExpanded =
+                                            !_isSymptomsExpanded,
+                                      ),
+                                  context: context,
+                                ),
+                                if (customIndicators.isNotEmpty) ...[
+                                  const SizedBox(height: 12),
+                                  _buildCategoryCard(
+                                    categoryId: 'custom',
+                                    title: 'Дополнительные показатели',
+                                    indicators: customIndicators,
+                                    fallbackIndicators: const [],
+                                    isExpanded: _isCustomIndicatorsExpanded,
+                                    onToggle: () =>
+                                        _toggleCategoryAndShowHintIfNeeded(
+                                          categoryId: 'custom',
+                                          isExpanded:
+                                              _isCustomIndicatorsExpanded,
+                                          toggle: () =>
+                                              _isCustomIndicatorsExpanded =
+                                                  !_isCustomIndicatorsExpanded,
+                                        ),
+                                    context: context,
+                                  ),
+                                ],
+                              ],
+                            );
+                          },
+                        ),
+                      ],
                     ),
 
                     const SizedBox(height: 16),
@@ -2288,7 +2661,11 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                     elevation: 0,
                                   ),
                                   onPressed: () async {
-                                    print(diary);
+                                    log.debug(
+                                      'Diary selected',
+                                      context: LogContext.diary,
+                                      extra: {'diary': diary?.toJson()},
+                                    );
                                     if (diary != null) {
                                       // Получаем all_indicators из settings
                                       final allIndicators =
@@ -2532,10 +2909,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                                       access['permission']
                                                           as String? ??
                                                       'edit';
-                                                  final status =
-                                                      access['status']
-                                                          as String? ??
-                                                      'active';
 
                                                   String userName =
                                                       '$lastName $firstName'
@@ -2811,7 +3184,12 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
   String _getIndicatorLabel(String key) => diary_utils.getIndicatorLabel(key);
 
   /// Показать модальное окно для заполнения параметра
-  void _showIndicatorModal(BuildContext context, String key, String label) {
+  void _showIndicatorModal(
+    BuildContext context,
+    String key,
+    String label, {
+    bool showAllIndicatorsCareSaveHint = false,
+  }) {
     // Определяем тип модального окна по ключу параметра
     final booleanParams = [
       'skin_moisturizing',
@@ -2844,7 +3222,13 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     ];
 
     if (booleanParams.contains(key)) {
-      _showBooleanModal(context, label, _getIndicatorDescription(key), key);
+      _showBooleanModal(
+        context,
+        label,
+        _getIndicatorDescription(key),
+        key,
+        showTutorialHint: showAllIndicatorsCareSaveHint,
+      );
     } else if (textParams.contains(key)) {
       _showTextModal(
         context,
@@ -2852,9 +3236,16 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         _getIndicatorDescription(key),
         _getIndicatorHint(key),
         key,
+        showTutorialHint: showAllIndicatorsCareSaveHint,
       );
     } else if (timeRangeParams.contains(key)) {
-      _showTimeRangeModal(context, label, _getIndicatorDescription(key), key);
+      _showTimeRangeModal(
+        context,
+        label,
+        _getIndicatorDescription(key),
+        key,
+        showTutorialHint: showAllIndicatorsCareSaveHint,
+      );
     } else if (timeParams.contains(key)) {
       _showTimeModal(context, label, _getIndicatorDescription(key), key);
     } else if (measurementParams.contains(key)) {
@@ -2864,9 +3255,16 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         _getIndicatorDescription(key),
         _getUnitForParameter(key),
         key,
+        showTutorialHint: showAllIndicatorsCareSaveHint,
       );
     } else if (key == 'medication' || key == 'vitamins') {
-      _showMedicationModal(context, label, _getIndicatorDescription(key), key);
+      _showMedicationModal(
+        context,
+        label,
+        _getIndicatorDescription(key),
+        key,
+        showTutorialHint: showAllIndicatorsCareSaveHint,
+      );
     } else if (key == 'urine_color') {
       _showUrineColorModal(context, label);
     } else {
@@ -2876,6 +3274,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         _getIndicatorDescription(key),
         _getIndicatorHint(key),
         key,
+        showTutorialHint: showAllIndicatorsCareSaveHint,
       );
     }
   }
@@ -2895,8 +3294,9 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     BuildContext context,
     String title,
     String description,
-    String key,
-  ) async {
+    String key, {
+    bool showTutorialHint = false,
+  }) async {
     final selectedValue = await modals.showBooleanModal(
       context: context,
       title: title,
@@ -2917,12 +3317,16 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         ),
       );
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('$title: ${selectedValue ? "Было" : "Не было"}'),
-          backgroundColor: AppConfig.primaryColor,
-        ),
-      );
+      if (showTutorialHint) {
+        _showAllIndicatorsSavedHint();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$title: ${selectedValue ? "Было" : "Не было"}'),
+            backgroundColor: AppConfig.primaryColor,
+          ),
+        );
+      }
     }
   }
 
@@ -2933,8 +3337,9 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     String title,
     String description,
     String hint,
-    String key,
-  ) async {
+    String key, {
+    bool showTutorialHint = false,
+  }) async {
     final result = await modals.showTextInputModal(
       context: context,
       title: title,
@@ -2953,12 +3358,16 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         ),
       );
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('$title сохранено'),
-          backgroundColor: AppConfig.primaryColor,
-        ),
-      );
+      if (showTutorialHint) {
+        _showAllIndicatorsSavedHint();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$title сохранено'),
+            backgroundColor: AppConfig.primaryColor,
+          ),
+        );
+      }
     }
   }
 
@@ -3005,8 +3414,9 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     BuildContext context,
     String title,
     String description,
-    String key,
-  ) async {
+    String key, {
+    bool showTutorialHint = false,
+  }) async {
     final result = await modals.showTimeRangeModal(
       context: context,
       title: title,
@@ -3028,12 +3438,16 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         ),
       );
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('$title: ${result.formattedRange}'),
-          backgroundColor: AppConfig.primaryColor,
-        ),
-      );
+      if (showTutorialHint) {
+        _showAllIndicatorsSavedHint();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$title: ${result.formattedRange}'),
+            backgroundColor: AppConfig.primaryColor,
+          ),
+        );
+      }
     }
   }
 
@@ -3044,8 +3458,9 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     String title,
     String description,
     String unit,
-    String key,
-  ) async {
+    String key, {
+    bool showTutorialHint = false,
+  }) async {
     final result = await modals.showMeasurementModal(
       context: context,
       title: title,
@@ -3068,12 +3483,16 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         ),
       );
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('$title: ${result.displayText}'),
-          backgroundColor: AppConfig.primaryColor,
-        ),
-      );
+      if (showTutorialHint) {
+        _showAllIndicatorsSavedHint();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$title: ${result.displayText}'),
+            backgroundColor: AppConfig.primaryColor,
+          ),
+        );
+      }
     }
   }
 
@@ -3083,8 +3502,9 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     BuildContext context,
     String title,
     String description,
-    String key,
-  ) async {
+    String key, {
+    bool showTutorialHint = false,
+  }) async {
     final result = await modals.showTextInputModal(
       context: context,
       title: title,
@@ -3093,9 +3513,11 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     );
 
     if (result != null && result.isNotEmpty && mounted) {
-      print('--- Save Medication/Vitamins Clicked ---');
-      print('Key: $key');
-      print('Value: $result');
+      log.debug(
+        'Save Medication/Vitamins',
+        context: LogContext.diary,
+        extra: {'key': key, 'value': result},
+      );
 
       context.read<DiaryBloc>().add(
         CreateMeasurement(
@@ -3107,12 +3529,16 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         ),
       );
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('$title: $result'),
-          backgroundColor: AppConfig.primaryColor,
-        ),
-      );
+      if (showTutorialHint) {
+        _showAllIndicatorsSavedHint();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$title: $result'),
+            backgroundColor: AppConfig.primaryColor,
+          ),
+        );
+      }
     }
   }
 
@@ -3250,7 +3676,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                               key: p.key,
                               intervalMinutes: p.intervalMinutes < 1
                                   ? 60
-                                  : p.intervalMinutes, // Минимум 1 минута
+                                  : p.intervalMinutes,
                               times: _editedTimes[p.key]!,
                               settings: p.settings,
                               lastRecordedAt: p.lastRecordedAt,
@@ -3268,8 +3694,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                         hasChanges = true;
                       }
 
-                      // 2. Create Measurement
-                      // Для давления проверяем оба поля
                       final hasMeasurementInput = param.key == 'blood_pressure'
                           ? (measurementController.text.isNotEmpty &&
                                 (_diastolicControllers[index]
@@ -3281,7 +3705,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                       if (hasMeasurementInput) {
                         dynamic value;
 
-                        // Обработка давления - используем оба контроллера
                         if (param.key == 'blood_pressure') {
                           final systolic = measurementController.text.trim();
                           final diastolic =
@@ -3290,27 +3713,17 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                             'systolic': int.tryParse(systolic) ?? 0,
                             'diastolic': int.tryParse(diastolic) ?? 0,
                           };
-                        }
-                        // Обработка булевых параметров
-                        else if (_booleanParams.contains(param.key)) {
+                        } else if (_booleanParams.contains(param.key)) {
                           value = measurementController.text == 'true';
-                        }
-                        // Обработка числовых параметров
-                        else if (_measurementParams.contains(param.key)) {
+                        } else if (_measurementParams.contains(param.key)) {
                           final numValue = num.tryParse(
                             measurementController.text.toString().replaceAll(
                               ',',
                               '.',
                             ),
                           );
-                          if (numValue != null) {
-                            value = numValue;
-                          } else {
-                            value = measurementController.text;
-                          }
-                        }
-                        // Обработка текстовых параметров - оборачиваем в Map
-                        else if (_textParams.contains(param.key)) {
+                          value = numValue ?? measurementController.text;
+                        } else if (_textParams.contains(param.key)) {
                           value = {'value': measurementController.text};
                         } else {
                           value = measurementController.text;
@@ -3328,13 +3741,11 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                             type: _getParameterType(param.key),
                             key: param.key,
                             value: {'value': value},
-                            notes:
-                                null, // User can add notes logic later if needed
+                            notes: null,
                             recordedAt: DateTime.now(),
                           ),
                         );
                         measurementController.clear();
-                        // Очищаем контроллер диастолического давления
                         if (param.key == 'blood_pressure') {
                           _diastolicControllers[index]?.clear();
                         }
@@ -3342,6 +3753,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                       }
 
                       if (hasChanges) {
+                        _pendingHintAfterCloseId =
+                            HintIds.healthDiaryAllIndicators;
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(content: Text('Данные сохранены')),
                         );
@@ -3444,7 +3857,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                           ),
                         ),
                         const SizedBox(height: 4),
-                        // List of times
                         if (times.isNotEmpty)
                           SizedBox(
                             height: 24,
@@ -3495,7 +3907,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                             ),
                           ),
                         if (times.isNotEmpty) const SizedBox(height: 4),
-
                         Row(
                           children: [
                             Flexible(
@@ -3532,7 +3943,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                       color: Colors.grey,
                                     ),
                                   ),
-                                  keyboardType: TextInputType.number,
+                                  keyboardType: TextInputType.text,
                                 ),
                               ),
                             ),
@@ -3787,198 +4198,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
       ),
       itemCount: dayWidgets.length,
       itemBuilder: (context, index) => dayWidgets[index],
-    );
-  }
-
-  void _showIndicatorInputDialog(
-    BuildContext context,
-    String indicatorName,
-    String category,
-  ) {
-    final TextEditingController valueController = TextEditingController();
-
-    // Descriptions for different indicators
-    final Map<String, String> descriptions = {
-      'Частота дыхания': 'Количество вдохов в минуту.',
-      'Температура': 'Температура тела в градусах Цельсия.',
-      'Давление': 'Артериальное давление (систолическое/диастолическое).',
-      'Пульс': 'Количество ударов сердца в минуту.',
-      'Сатурация': 'Насыщение крови кислородом в процентах.',
-      'Выпито жидкости': 'Количество выпитой жидкости в миллилитрах.',
-      'Выделено мочи': 'Количество выделенной мочи в миллилитрах.',
-      'Цвет мочи': 'Описание цвета мочи.',
-      'Дефекация': 'Описание дефекации.',
-    };
-
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.white,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Title
-              Text(
-                indicatorName,
-                textAlign: TextAlign.center,
-                style: GoogleFonts.firaSans(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.grey.shade900,
-                ),
-              ),
-              const SizedBox(height: 16),
-              // Description 1
-              Text(
-                descriptions[indicatorName] ?? 'Введите значение показателя.',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.firaSans(
-                  fontSize: 14,
-                  color: Colors.grey.shade600,
-                ),
-              ),
-              const SizedBox(height: 8),
-              // Description 2
-              Text(
-                'Время заполнения фиксируется автоматически',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.firaSans(
-                  fontSize: 12,
-                  color: Colors.grey.shade500,
-                ),
-              ),
-              const SizedBox(height: 24),
-              // Value label
-              Text(
-                'Значение',
-                style: GoogleFonts.firaSans(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey.shade900,
-                ),
-              ),
-              const SizedBox(height: 8),
-              // Input field
-              TextFormField(
-                controller: valueController,
-                keyboardType: TextInputType.number,
-                style: GoogleFonts.firaSans(
-                  fontSize: 16,
-                  color: Colors.grey.shade900,
-                ),
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: Colors.white,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: Colors.grey.shade300,
-                      width: 1,
-                    ),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: Colors.grey.shade300,
-                      width: 1,
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: AppConfig.primaryColor,
-                      width: 1,
-                    ),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 16,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              // Buttons
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.grey.shade200,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        elevation: 0,
-                      ),
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        // Remove indicator from selection if cancelled
-                        setState(() {
-                          if (category == 'physical') {
-                            _selectedPhysicalIndicators.remove(indicatorName);
-                          } else {
-                            _selectedExcretionIndicators.remove(indicatorName);
-                          }
-                        });
-                      },
-                      child: Text(
-                        'Отмена',
-                        style: GoogleFonts.firaSans(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade800,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: InkWell(
-                      onTap: () {
-                        // TODO: Save value
-                        Navigator.of(context).pop();
-                      },
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              AppConfig.primaryColor,
-                              AppConfig.primaryColor.withOpacity(0.8),
-                            ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          'Сохранить',
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.firaSans(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -4386,11 +4605,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
 
               final isSelected =
                   isCurrentMonth && dayNumber == _selectedDate.day;
-              final isToday =
-                  isCurrentMonth &&
-                  _selectedDate.year == DateTime.now().year &&
-                  _selectedDate.month == DateTime.now().month &&
-                  dayNumber == DateTime.now().day;
 
               return GestureDetector(
                 onTap: () {
@@ -4615,7 +4829,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
 
   /// Форматирует значение записи для отображения в истории
   String _formatEntryValue(DiaryEntry entry) {
-    var value = entry.value;
+    // entry.value теперь Map<String,dynamic> — используем dynamic для совместимости
+    dynamic value = entry.value;
 
     // Показатели времени не должны преобразовываться в "Было"/"Не было"
     const timeParams = [
@@ -4826,76 +5041,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     }
 
     return displayValue;
-  }
-
-  String _getCategoryForParameter(String key) {
-    switch (key) {
-      case 'bath':
-      case 'diaper_change':
-      case 'nail_care':
-      case 'hair_care':
-        return 'Гигиена';
-      case 'temperature':
-      case 'weight':
-      case 'height':
-      case 'pulse':
-      case 'blood_pressure':
-      case 'saturation':
-      case 'oxygen_saturation':
-      case 'respiratory_rate':
-        return 'Физические показатели';
-      case 'urine':
-      case 'stool':
-      case 'vomit':
-        return 'Выделения';
-      case 'sleep':
-      case 'nap':
-        return 'Сон';
-      case 'feeding':
-      case 'breastfeeding':
-      case 'bottle':
-      case 'solid_food':
-        return 'Питание';
-      case 'walk':
-      case 'activity':
-        return 'Активность';
-      default:
-        return 'Другое';
-    }
-  }
-
-  Widget _buildValueChip(String value, String unit) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: AppConfig.primaryColor.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            value,
-            style: GoogleFonts.firaSans(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: AppConfig.primaryColor,
-            ),
-          ),
-          if (unit.isNotEmpty) ...[
-            const SizedBox(width: 4),
-            Text(
-              unit,
-              style: GoogleFonts.firaSans(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: AppConfig.primaryColor.withOpacity(0.8),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
   }
 
   /// Получить единицу измерения для параметра
@@ -5522,124 +5667,6 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     );
   }
 
-  Widget _buildTaskCard(RouteSheetTask task) {
-    Color backgroundColor;
-    Color buttonColor;
-    String statusText;
-
-    // Check if task is rescheduled first, then apply status colors
-    if (task.isRescheduled) {
-      backgroundColor = Colors.orange;
-      buttonColor = Colors.orange;
-      statusText = 'Перенесено';
-    } else {
-      switch (task.status) {
-        case TaskStatus.completed:
-          backgroundColor = AppConfig.primaryColor;
-          buttonColor = AppConfig.primaryColor;
-          statusText = 'Выполнено';
-          break;
-        case TaskStatus.pending:
-          backgroundColor = const Color(0xFF00BCD4);
-          buttonColor = const Color(0xFF00BCD4);
-          statusText = 'Ожидает';
-          break;
-        case TaskStatus.cancelled:
-          backgroundColor = Colors.orange;
-          buttonColor = Colors.orange;
-          statusText = 'Отменено';
-          break;
-        case TaskStatus.missed:
-          backgroundColor = Colors.red;
-          buttonColor = Colors.red;
-          statusText = 'Пропущено';
-          break;
-      }
-    }
-
-    // Определяем, есть ли причина для отображения
-    final String? reason = task.comment ?? task.rescheduleReason;
-    final bool hasReason =
-        reason != null &&
-        reason.isNotEmpty &&
-        (task.status == TaskStatus.missed ||
-            task.status == TaskStatus.cancelled ||
-            task.isRescheduled);
-
-    // Высота карточки зависит от наличия причины
-    final double cardHeight = hasReason ? 64.0 : 44.0;
-
-    return GestureDetector(
-      onTap: () => _showTaskActionsModal(context, task),
-      child: Container(
-        height: cardHeight,
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      task.title,
-                      style: GoogleFonts.firaSans(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                    ),
-                    if (hasReason) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        'Причина: $reason',
-                        style: GoogleFonts.firaSans(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w400,
-                          color: Colors.white.withOpacity(0.85),
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: buttonColor.withOpacity(0.8),
-                borderRadius: const BorderRadius.only(
-                  topRight: Radius.circular(8),
-                  bottomRight: Radius.circular(8),
-                ),
-              ),
-              child: Text(
-                statusText,
-                style: GoogleFonts.firaSans(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _showTaskActionsModal(BuildContext context, RouteSheetTask task) {
     // Сохраняем контекст страницы для передачи в дочерние диалоги
     final pageContext = context;
@@ -5807,27 +5834,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     RouteSheetTask task,
     RouteSheetCubit cubit,
   ) {
-    // Сохраняем контекст страницы для snackbar (он остаётся валидным после закрытия диалога)
-    final pageContext = context;
-
     // Определяем тип задачи по relatedDiaryKey или title
     final taskKey = task.relatedDiaryKey ?? _getKeyFromTitle(task.title);
-
-    // Типы показателей
-    const booleanParams = [
-      'skin_moisturizing',
-      'hygiene',
-      'defecation',
-      'nausea',
-      'vomiting',
-      'dyspnea',
-      'itching',
-      'cough',
-      'dry_mouth',
-      'hiccup',
-      'taste_disorder',
-      'walk',
-    ];
 
     const measurementParams = [
       'blood_pressure',
@@ -5963,7 +5971,11 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                           taskId: task.id,
                           value: {'value': true},
                         );
+                        // Обновляем историю (дневник)
                         if (pageContext.mounted) {
+                          pageContext.read<DiaryBloc>().add(
+                            LoadDiary(widget.diaryId),
+                          );
                           ScaffoldMessenger.of(pageContext).showSnackBar(
                             SnackBar(
                               content: Text(
@@ -6001,7 +6013,11 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                           taskId: task.id,
                           value: {'value': false},
                         );
+                        // Обновляем историю (дневник)
                         if (pageContext.mounted) {
+                          pageContext.read<DiaryBloc>().add(
+                            LoadDiary(widget.diaryId),
+                          );
                           ScaffoldMessenger.of(pageContext).showSnackBar(
                             SnackBar(
                               content: Text(
@@ -6089,7 +6105,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                     Expanded(
                       child: TextField(
                         controller: controller,
-                        keyboardType: TextInputType.number,
+                        keyboardType: TextInputType.text,
                         decoration: InputDecoration(
                           labelText: 'Систолическое',
                           hintText: '120',
@@ -6120,7 +6136,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                     Expanded(
                       child: TextField(
                         controller: controller2,
-                        keyboardType: TextInputType.number,
+                        keyboardType: TextInputType.text,
                         decoration: InputDecoration(
                           labelText: 'Диастолическое',
                           hintText: '80',
@@ -6142,9 +6158,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
               ] else ...[
                 TextField(
                   controller: controller,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
+                  keyboardType: TextInputType.text,
                   decoration: InputDecoration(
                     labelText: 'Значение',
                     suffixText: unit,
@@ -6221,7 +6235,11 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                           taskId: task.id,
                           value: {'value': value},
                         );
+                        // Обновляем историю (дневник)
                         if (pageContext.mounted) {
+                          pageContext.read<DiaryBloc>().add(
+                            LoadDiary(widget.diaryId),
+                          );
                           ScaffoldMessenger.of(pageContext).showSnackBar(
                             SnackBar(
                               content: Text(
@@ -6375,7 +6393,11 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                           taskId: task.id,
                           value: {'value': value},
                         );
+                        // Обновляем историю (дневник)
                         if (pageContext.mounted) {
+                          pageContext.read<DiaryBloc>().add(
+                            LoadDiary(widget.diaryId),
+                          );
                           ScaffoldMessenger.of(pageContext).showSnackBar(
                             SnackBar(
                               content: Text(
@@ -6531,7 +6553,11 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                   taskId: task.id,
                                   value: {'value': selectedTime!.format(ctx)},
                                 );
+                                // Обновляем историю (дневник)
                                 if (pageContext.mounted) {
+                                  pageContext.read<DiaryBloc>().add(
+                                    LoadDiary(widget.diaryId),
+                                  );
                                   ScaffoldMessenger.of(
                                     pageContext,
                                   ).showSnackBar(
@@ -6777,7 +6803,11 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                             taskId: task.id,
                             value: {'value': value},
                           );
+                          // Обновляем историю (дневник)
                           if (pageContext.mounted) {
+                            pageContext.read<DiaryBloc>().add(
+                              LoadDiary(widget.diaryId),
+                            );
                             ScaffoldMessenger.of(pageContext).showSnackBar(
                               SnackBar(
                                 content: Text(
@@ -7298,6 +7328,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
       child: RefreshIndicator(
         onRefresh: () async {
           context.read<DiaryBloc>().add(LoadDiary(widget.diaryId));
+          await _loadDiaryOwnerClient();
           await Future.delayed(const Duration(milliseconds: 500));
         },
         color: AppConfig.primaryColor,
@@ -7307,6 +7338,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              _buildDiaryOwnerClientCard(),
+              const SizedBox(height: 16),
               // Share diary card
               Container(
                 padding: const EdgeInsets.all(20),
@@ -7363,7 +7396,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                   children: [
                     if (_clientInviteUrl == null)
                       Text(
-                        'Пока ссылка не создана. Нажмите кнопку ниже, чтобы сформировать персональную ссылку для клиента.',
+                        'Пока приглашение не создано. Нажмите кнопку ниже, чтобы сформировать персональное приглашение для клиента.',
                         style: GoogleFonts.firaSans(
                           fontSize: 14,
                           color: Colors.grey.shade700,
@@ -7371,7 +7404,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                       )
                     else ...[
                       Text(
-                        'Ссылка создана. Отправьте её клиенту:',
+                        'Приглашение создано. Отправьте ссылку клиенту:',
                         style: GoogleFonts.firaSans(
                           fontSize: 14,
                           color: Colors.grey.shade700,
@@ -7462,8 +7495,8 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                 )
                               : Text(
                                   _clientInviteUrl == null
-                                      ? 'Создать ссылку'
-                                      : 'Создать новую ссылку',
+                                      ? 'Создать приглашение'
+                                      : 'Создать новое приглашение',
                                   textAlign: TextAlign.center,
                                   style: GoogleFonts.firaSans(
                                     fontSize: 16,
@@ -7484,6 +7517,159 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     );
   }
 
+  Widget _buildDiaryOwnerClientCard() {
+    if (_isLoadingDiaryOwner) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            const SizedBox(
+              height: 20,
+              width: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              'Загрузка владельца дневника...',
+              style: GoogleFonts.firaSans(
+                fontSize: 14,
+                color: Colors.grey.shade700,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_diaryOwnerError != null) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Не удалось загрузить владельца дневника',
+              style: GoogleFonts.firaSans(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: Colors.grey.shade900,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Проверьте подключение и попробуйте снова.',
+              style: GoogleFonts.firaSans(
+                fontSize: 14,
+                color: Colors.grey.shade700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: _loadDiaryOwnerClient,
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: Colors.grey.shade400),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: Text(
+                'Повторить',
+                style: GoogleFonts.firaSans(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade900,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final ownerClient = _diaryOwnerClients.isNotEmpty
+        ? _diaryOwnerClients.first
+        : null;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Клиент',
+            style: GoogleFonts.firaSans(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: Colors.grey.shade900,
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (ownerClient == null)
+            Text(
+              'Владелец не указан.',
+              style: GoogleFonts.firaSans(
+                fontSize: 14,
+                color: Colors.grey.shade700,
+              ),
+            )
+          else ...[
+            Text(
+              ownerClient.fullName,
+              style: GoogleFonts.firaSans(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: Colors.grey.shade900,
+              ),
+            ),
+            if (ownerClient.phone != null && ownerClient.phone!.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                ownerClient.phone!,
+                style: GoogleFonts.firaSans(
+                  fontSize: 14,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
   Future<void> _createClientInvitation(BuildContext context) async {
     setState(() {
       _isCreatingInvitation = true;
@@ -7499,22 +7685,16 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
       if (inviteUrl != null) {
         // Заменяем localhost на правильный домен
         final correctedUrl = inviteUrl
-            .replaceAll(
-              'localhost:3000',
-              'https://сотрудники.системыздоровья.рф',
-            )
+            .replaceAll('localhost:3000', 'https://клиент.системыздоровья.рф')
             .replaceAll(
               'http://localhost:3000',
-              'https://сотрудники.системыздоровья.рф',
+              'https://клиент.системыздоровья.рф',
             )
             .replaceAll(
               'https://localhost:3000',
-              'https://сотрудники.системыздоровья.рф',
+              'https://клиент.системыздоровья.рф',
             )
-            .replaceAll(
-              'api.sistemizdorovya.ru',
-              'сотрудники.системыздоровья.рф',
-            );
+            .replaceAll('api.sistemizdorovya.ru', 'клиент.системыздоровья.рф');
 
         setState(() {
           _clientInviteUrl = correctedUrl;
@@ -7526,7 +7706,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
           type: ToastificationType.success,
           style: ToastificationStyle.fillColored,
           title: const Text('Успешно'),
-          description: const Text('Ссылка-приглашение создана'),
+          description: const Text('Приглашение создано'),
           autoCloseDuration: const Duration(seconds: 2),
         );
       } else {
@@ -7543,8 +7723,14 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         style: ToastificationStyle.fillColored,
         title: const Text('Ошибка'),
         description: Text(
-          e.toString().contains('Unauthorized') || e.toString().contains('403')
+          e is ForbiddenException ||
+                  e.toString().contains('Forbidden') ||
+                  e.toString().contains('403')
               ? 'Недостаточно прав для создания приглашения'
+              : e is ConflictException || e.toString().contains('409')
+              ? 'Дневник не создан или клиент уже привязан'
+              : e is ValidationException || e.toString().contains('422')
+              ? 'Проверьте корректность данных пациента'
               : 'Не удалось создать приглашение: ${e.toString()}',
         ),
         autoCloseDuration: const Duration(seconds: 3),
@@ -7558,6 +7744,10 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
         TextEditingController();
     final TextEditingController physicalIndicatorController =
         TextEditingController();
+
+    // Списки для пользовательских манипуляций
+    final List<String> customCareManipulations = [];
+    final List<String> customPhysicalManipulations = [];
 
     // Получаем RouteSheetCubit до открытия модального окна
     final routeSheetCubit = context.read<RouteSheetCubit>();
@@ -7638,8 +7828,12 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                               'Прием пищи',
                               'Прием лекарств',
                               'Прием витаминов',
+                              ...customCareManipulations,
                             ].map((item) {
                               final isSelected = selectedManipulations.contains(
+                                item,
+                              );
+                              final isCustom = customCareManipulations.contains(
                                 item,
                               );
                               return GestureDetector(
@@ -7657,6 +7851,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                       });
                                     },
                                     routeSheetCubit,
+                                    isCustom,
                                   );
                                 },
                                 child: Container(
@@ -7678,15 +7873,42 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                       width: 2,
                                     ),
                                   ),
-                                  child: Text(
-                                    item,
-                                    style: GoogleFonts.firaSans(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      color: isSelected
-                                          ? AppConfig.primaryColor
-                                          : Colors.grey.shade900,
-                                    ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        item,
+                                        style: GoogleFonts.firaSans(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          color: isSelected
+                                              ? AppConfig.primaryColor
+                                              : Colors.grey.shade900,
+                                        ),
+                                      ),
+                                      if (isCustom) ...[
+                                        const SizedBox(width: 8),
+                                        GestureDetector(
+                                          onTap: () {
+                                            setModalState(() {
+                                              customCareManipulations.remove(
+                                                item,
+                                              );
+                                              selectedManipulations.remove(
+                                                item,
+                                              );
+                                            });
+                                          },
+                                          child: Icon(
+                                            Icons.close,
+                                            size: 16,
+                                            color: isSelected
+                                                ? AppConfig.primaryColor
+                                                : Colors.grey.shade600,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
                                   ),
                                 ),
                               );
@@ -7726,7 +7948,11 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                           GestureDetector(
                             onTap: () {
                               if (careIndicatorController.text.isNotEmpty) {
-                                // TODO: Add custom indicator
+                                setModalState(() {
+                                  customCareManipulations.add(
+                                    careIndicatorController.text.trim(),
+                                  );
+                                });
                                 careIndicatorController.clear();
                               }
                             },
@@ -7771,10 +7997,13 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                               'Выпито/выделено и цвет мочи',
                               'Дефекация',
                               'Пульс',
+                              ...customPhysicalManipulations,
                             ].map((item) {
                               final isSelected = selectedManipulations.contains(
                                 item,
                               );
+                              final isCustom = customPhysicalManipulations
+                                  .contains(item);
                               return GestureDetector(
                                 onTap: () {
                                   _showManipulationSettingsModal(
@@ -7790,6 +8019,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                       });
                                     },
                                     routeSheetCubit,
+                                    isCustom,
                                   );
                                 },
                                 child: Container(
@@ -7811,15 +8041,41 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                                       width: 2,
                                     ),
                                   ),
-                                  child: Text(
-                                    item,
-                                    style: GoogleFonts.firaSans(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      color: isSelected
-                                          ? AppConfig.primaryColor
-                                          : Colors.grey.shade900,
-                                    ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        item,
+                                        style: GoogleFonts.firaSans(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          color: isSelected
+                                              ? AppConfig.primaryColor
+                                              : Colors.grey.shade900,
+                                        ),
+                                      ),
+                                      if (isCustom) ...[
+                                        const SizedBox(width: 8),
+                                        GestureDetector(
+                                          onTap: () {
+                                            setModalState(() {
+                                              customPhysicalManipulations
+                                                  .remove(item);
+                                              selectedManipulations.remove(
+                                                item,
+                                              );
+                                            });
+                                          },
+                                          child: Icon(
+                                            Icons.close,
+                                            size: 16,
+                                            color: isSelected
+                                                ? AppConfig.primaryColor
+                                                : Colors.grey.shade600,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
                                   ),
                                 ),
                               );
@@ -7859,7 +8115,11 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
                           GestureDetector(
                             onTap: () {
                               if (physicalIndicatorController.text.isNotEmpty) {
-                                // TODO: Add custom indicator
+                                setModalState(() {
+                                  customPhysicalManipulations.add(
+                                    physicalIndicatorController.text.trim(),
+                                  );
+                                });
                                 physicalIndicatorController.clear();
                               }
                             },
@@ -7927,10 +8187,7 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
           ),
         ),
       ),
-    ).then((_) {
-      careIndicatorController.dispose();
-      physicalIndicatorController.dispose();
-    });
+    );
   }
 
   void _showManipulationSettingsModal(
@@ -7938,307 +8195,93 @@ class _HealthDiaryPageState extends State<HealthDiaryPage>
     String manipulationName,
     Function(bool shouldAdd) onSave,
     RouteSheetCubit routeSheetCubit,
+    bool isCustom,
   ) {
-    final TextEditingController timeFromController = TextEditingController();
-    final TextEditingController timeToController = TextEditingController();
+    final timeFromController = TextEditingController();
+    final timeToController = TextEditingController();
     final timeMaskFormatter = MaskTextInputFormatter(
       mask: '##:##',
       filter: {"#": RegExp(r'[0-9]')},
     );
 
+    // Сохраняем контекст страницы для передачи в дочерние диалоги
+    final pageContext = context;
+    // Получаем кубит из контекста страницы, где провайдер доступен
+    final routeSheetCubit = context.read<RouteSheetCubit>();
+
     showModalBottomSheet(
       context: context,
-      isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (modalContext) => _ManipulationSettingsModalContent(
-        manipulationName: manipulationName,
-        onSave: onSave,
-        timeFromController: timeFromController,
-        timeToController: timeToController,
-        timeMaskFormatter: timeMaskFormatter,
-        routeSheetCubit: routeSheetCubit,
+      isScrollControlled: true,
+      builder: (_) => BlocProvider.value(
+        value: context.read<RouteSheetCubit>(),
+        child: ManipulationSettingsModalContent(
+          manipulationName: manipulationName,
+          onSave: onSave,
+          timeFromController: timeFromController,
+          timeToController: timeToController,
+          timeMaskFormatter: timeMaskFormatter,
+          routeSheetCubit: routeSheetCubit,
+          isCustom: isCustom,
+        ),
       ),
     ).then((_) {
       // Dispose контроллеров только после полного закрытия модалки
-      // Задержка нужна, чтобы модалка успела полностью закрыться
-      Future.delayed(const Duration(milliseconds: 500), () {
-        try {
-          timeFromController.dispose();
-        } catch (e) {
-          // Already disposed or still in use
-        }
-        try {
-          timeToController.dispose();
-        } catch (e) {
-          // Already disposed or still in use
-        }
-      });
+      try {
+        timeFromController.dispose();
+        timeToController.dispose();
+      } catch (e) {
+        // Already disposed or still in use
+      }
     });
   }
 
   Widget _buildAlarmTab(BuildContext context) {
     return AlarmTab(diaryId: widget.diaryId);
   }
-
-  /// Показать тестовое уведомление для закрепленного параметра
-  Future<void> _showTestPinnedNotification(
-    BuildContext context,
-    PinnedParameter parameter,
-  ) async {
-    try {
-      final pinnedNotificationService = PinnedNotificationService();
-      await pinnedNotificationService.showTestPinnedParameterNotification(
-        patientId: widget.patientId,
-        parameter: parameter,
-      );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Тестовое уведомление отправлено для ${parameter.label}',
-            ),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      log.e('Ошибка показа тестового уведомления: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Ошибка отправки тестового уведомления'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-    }
-  }
 }
 
-class _ManipulationSettingsModalContent extends StatefulWidget {
-  final String manipulationName;
-  final Function(bool shouldAdd) onSave;
-  final TextEditingController timeFromController;
-  final TextEditingController timeToController;
-  final MaskTextInputFormatter timeMaskFormatter;
-  final RouteSheetCubit routeSheetCubit;
+class _HealthDiaryHintOverlay extends StatelessWidget {
+  const _HealthDiaryHintOverlay({required this.child});
 
-  const _ManipulationSettingsModalContent({
-    required this.manipulationName,
-    required this.onSave,
-    required this.timeFromController,
-    required this.timeToController,
-    required this.timeMaskFormatter,
-    required this.routeSheetCubit,
-  });
+  final Widget child;
 
   @override
-  State<_ManipulationSettingsModalContent> createState() =>
-      _ManipulationSettingsModalContentState();
-}
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 520),
+        curve: Curves.easeOutCubic,
+        builder: (context, progress, _) {
+          final fadeProgress = Curves.easeOutCubic.transform(progress);
+          final bounceProgress = Curves.elasticOut.transform(progress);
+          final childOffset = 26 * (1 - fadeProgress);
+          final childScale = 0.82 + (0.18 * bounceProgress);
 
-class _ManipulationSettingsModalContentState
-    extends State<_ManipulationSettingsModalContent> {
-  final Set<int> _selectedDays = {}; // 0-6 где 0=ПН, 6=ВС
-  Employee? _selectedEmployee;
-  final List<String> selectedTimes = [];
-  final TextEditingController timeFromController = TextEditingController();
-  final TextEditingController timeToController = TextEditingController();
-  final timeMaskFormatter = MaskTextInputFormatter(
-    mask: '##:##',
-    filter: {"#": RegExp(r'[0-9]')},
-  );
-
-  static const _dayLabels = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'];
-  // API использует 0 = Воскресенье, 1 = Понедельник...
-  static const _dayApiValues = [1, 2, 3, 4, 5, 6, 0];
-
-  // Сотрудники
-  List<Employee> _employees = [];
-  bool _isLoadingEmployees = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadEmployees();
-  }
-
-  Future<void> _loadEmployees() async {
-    setState(() {
-      _isLoadingEmployees = true;
-    });
-
-    try {
-      final repository = EmployeeRepository();
-      final employees = await repository.getEmployees();
-
-      if (mounted) {
-        setState(() {
-          _employees = employees;
-          _isLoadingEmployees = false;
-        });
-      }
-    } catch (e, stackTrace) {
-      if (mounted) {
-        setState(() {
-          _isLoadingEmployees = false;
-        });
-        // Показываем ошибку пользователю
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Ошибка загрузки сотрудников: ${e.toString()}',
-              style: GoogleFonts.firaSans(),
-            ),
-            backgroundColor: Colors.red,
-            action: SnackBarAction(
-              label: 'Повторить',
-              textColor: Colors.white,
-              onPressed: _loadEmployees,
-            ),
-          ),
-        );
-      }
-    }
-  }
-
-  void _showEmployeeSelectionDialog() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setModalState) {
-          // Подписываемся на обновления состояния родительского виджета
-          return Container(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.7,
-            ),
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+          return Material(
+            color: Colors.transparent,
+            child: Stack(
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Выберите сотрудника',
-                      style: GoogleFonts.firaSans(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.grey.shade900,
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.pop(ctx),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                if (_isLoadingEmployees)
-                  const Padding(
-                    padding: EdgeInsets.all(40),
-                    child: Center(child: CircularProgressIndicator()),
-                  )
-                else if (_employees.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.people_outline,
-                          size: 48,
-                          color: Colors.grey.shade400,
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'Нет доступных сотрудников',
-                          style: GoogleFonts.firaSans(
-                            fontSize: 14,
-                            color: Colors.grey.shade600,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 16),
-                        ElevatedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(ctx);
-                            _loadEmployees();
-                          },
-                          icon: const Icon(Icons.refresh),
-                          label: Text(
-                            'Обновить список',
-                            style: GoogleFonts.firaSans(
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppConfig.primaryColor,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 24,
-                              vertical: 12,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                else
-                  Flexible(
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: _employees.length,
-                      itemBuilder: (context, index) {
-                        final employee = _employees[index];
-                        final isSelected = _selectedEmployee?.id == employee.id;
-                        return ListTile(
-                          leading: _buildEmployeeAvatar(employee),
-                          title: Text(
-                            _getEmployeeDisplayName(employee),
-                            style: GoogleFonts.firaSans(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          subtitle: Text(
-                            employee.roleDisplayName,
-                            style: GoogleFonts.firaSans(
-                              fontSize: 12,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                          trailing: isSelected
-                              ? Icon(
-                                  Icons.check_circle,
-                                  color: AppConfig.primaryColor,
-                                )
-                              : null,
-                          onTap: () {
-                            setState(() {
-                              _selectedEmployee = employee;
-                            });
-                            Navigator.pop(ctx);
-                          },
-                        );
-                      },
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: _HealthDiaryHintOverlayPainter(
+                      progress: fadeProgress,
                     ),
                   ),
-                const SizedBox(height: 16),
+                ),
+                SafeArea(
+                  child: Transform.translate(
+                    offset: Offset(0, childOffset),
+                    child: Transform.scale(
+                      scale: childScale,
+                      child: Opacity(
+                        opacity: fadeProgress,
+                        child: Align(alignment: Alignment.center, child: child),
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           );
@@ -8246,660 +8289,368 @@ class _ManipulationSettingsModalContentState
       ),
     );
   }
+}
 
-  Color _getRoleColor(String role) {
-    switch (role) {
-      case 'owner':
-        return Colors.purple;
-      case 'admin':
-        return Colors.blue;
-      case 'doctor':
-        return Colors.green;
-      case 'caregiver':
-        return Colors.orange;
-      default:
-        return Colors.grey;
-    }
-  }
+class _HealthDiaryHintOverlayPainter extends CustomPainter {
+  const _HealthDiaryHintOverlayPainter({required this.progress});
 
-  /// Виджет аватара сотрудника для маршрутного листа
-  Widget _buildEmployeeAvatar(Employee employee) {
-    return Container(
-      width: 28,
-      height: 28,
-      decoration: BoxDecoration(
-        color: _getRoleColor(employee.role).withOpacity(0.1),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: employee.avatarUrl != null && employee.avatarUrl!.isNotEmpty
-          ? ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: Image.network(
-                ApiConfig.getFullUrl(employee.avatarUrl!),
-                width: 28,
-                height: 28,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return Center(
-                    child: Text(
-                      _getEmployeeInitials(employee),
-                      style: GoogleFonts.firaSans(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: _getRoleColor(employee.role),
-                      ),
-                    ),
-                  );
-                },
-                loadingBuilder: (context, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return Center(
-                    child: SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1,
-                        valueColor: AlwaysStoppedAnimation(
-                          _getRoleColor(employee.role),
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            )
-          : Center(
-              child: Text(
-                _getEmployeeInitials(employee),
-                style: GoogleFonts.firaSans(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  color: _getRoleColor(employee.role),
-                ),
-              ),
-            ),
-    );
-  }
+  final double progress;
 
-  /// Получить отображаемое имя сотрудника
-  String _getEmployeeDisplayName(Employee employee) {
-    // Модель Employee уже правильно обрабатывает отображение:
-    // - Для организаций (owner) показывает название организации из поля name
-    // - Для врачей и сиделок показывает имя и фамилию
-    return employee.fullName;
-  }
+  @override
+  void paint(Canvas canvas, Size size) {
+    final overlayPath = Path()
+      ..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
 
-  /// Получить инициалы сотрудника с учетом организации
-  String _getEmployeeInitials(Employee employee) {
-    // Для организаций (владельцев) используем инициалы из названия организации
-    if (employee.isOrganization &&
-        employee.name != null &&
-        employee.name!.isNotEmpty) {
-      final words = employee.name!.split(' ');
-      if (words.length >= 2) {
-        return '${words[0][0].toUpperCase()}${words[1][0].toUpperCase()}';
-      } else if (words.isNotEmpty) {
-        return words[0].length >= 2
-            ? '${words[0][0].toUpperCase()}${words[0][1].toUpperCase()}'
-            : words[0][0].toUpperCase();
-      }
-    }
+    final paint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.58 * progress)
+      ..style = PaintingStyle.fill;
 
-    // Для врачей и сиделок используем инициалы из имени и фамилии
-    final first = employee.firstName?.isNotEmpty == true
-        ? employee.firstName![0].toUpperCase()
-        : '';
-    final last = employee.lastName?.isNotEmpty == true
-        ? employee.lastName![0].toUpperCase()
-        : '';
-
-    if (first.isEmpty && last.isEmpty) {
-      return '?';
-    }
-    return '$last$first';
+    canvas.drawPath(overlayPath, paint);
   }
 
   @override
-  void dispose() {
-    timeFromController.dispose();
-    timeToController.dispose();
-    super.dispose();
+  bool shouldRepaint(covariant _HealthDiaryHintOverlayPainter oldDelegate) {
+    return oldDelegate.progress != progress;
   }
+}
 
-  void _addTimeSlot() {
-    final timeFrom = timeFromController.text.trim();
-    final timeTo = timeToController.text.trim();
+class _HealthDiaryIntroTooltip extends StatelessWidget {
+  const _HealthDiaryIntroTooltip({required this.onConfirm});
 
-    if (timeFrom.isNotEmpty && timeTo.isNotEmpty) {
-      setState(() {
-        selectedTimes.add('$timeFrom - $timeTo');
-        timeFromController.clear();
-        timeToController.clear();
-      });
-    }
-  }
-
-  void _removeTimeSlot(int index) {
-    setState(() {
-      selectedTimes.removeAt(index);
-    });
-  }
+  final VoidCallback onConfirm;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.75,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        children: [
-          // Header
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Настройте\nманипуляцию',
-                  style: GoogleFonts.firaSans(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    color: AppConfig.primaryColor,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.grey),
-                  onPressed: () => context.pop(),
-                ),
-              ],
+    final tooltipWidth = (MediaQuery.sizeOf(context).width - 48).clamp(
+      260.0,
+      360.0,
+    );
+
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+      child: SizedBox(
+        width: tooltipWidth,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF65B8C8), Color(0xFF2E8298)],
             ),
+            borderRadius: BorderRadius.circular(28),
           ),
-          // Content
-          Expanded(
-            child: SingleChildScrollView(
-              padding: EdgeInsets.only(
-                left: 20,
-                right: 20,
-                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Это дневник здоровья',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.firaSans(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                  height: 1.15,
+                  decoration: TextDecoration.none,
+                ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Manipulation name
-                  Text(
-                    widget.manipulationName,
-                    style: GoogleFonts.firaSans(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.grey.shade900,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Employee selection
-                  Text(
-                    'Выберите сотрудника:',
-                    style: GoogleFonts.firaSans(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade900,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: _showEmployeeSelectionDialog,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade100,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: _selectedEmployee != null
-                                    ? AppConfig.primaryColor
-                                    : Colors.grey.shade300,
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                if (_selectedEmployee != null) ...[
-                                  _buildEmployeeAvatar(_selectedEmployee!),
-                                  const SizedBox(width: 10),
-                                ],
-                                Expanded(
-                                  child: Text(
-                                    _selectedEmployee != null
-                                        ? _getEmployeeDisplayName(
-                                            _selectedEmployee!,
-                                          )
-                                        : 'Выберите сотрудника',
-                                    style: GoogleFonts.firaSans(
-                                      fontSize: 14,
-                                      color: _selectedEmployee != null
-                                          ? Colors.grey.shade900
-                                          : Colors.grey.shade500,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                Icon(
-                                  Icons.arrow_forward_ios,
-                                  size: 16,
-                                  color: Colors.grey.shade600,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton(
-                        onPressed: () {
-                          // Переход на страницу сотрудников для добавления
-                          context.push('/employees');
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppConfig.primaryColor,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 12,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 0,
-                        ),
-                        child: Text(
-                          'Добавить',
-                          style: GoogleFonts.firaSans(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Date selection
-                  Text(
-                    'Дни недели:',
-                    style: GoogleFonts.firaSans(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade900,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: List.generate(7, (index) {
-                        final isSelected = _selectedDays.contains(index);
-                        return GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              if (isSelected) {
-                                _selectedDays.remove(index);
-                              } else {
-                                _selectedDays.add(index);
-                              }
-                            });
-                          },
-                          child: Container(
-                            width: 42,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              color: isSelected
-                                  ? AppConfig.primaryColor
-                                  : Colors.grey.shade300,
-                              borderRadius: BorderRadius.circular(8),
-                              border: isSelected
-                                  ? null
-                                  : Border.all(color: Colors.grey.shade300),
-                            ),
-                            child: Center(
-                              child: Text(
-                                _dayLabels[index],
-                                style: GoogleFonts.firaSans(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: isSelected
-                                      ? Colors.white
-                                      : Colors.grey.shade700,
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      }),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Time selection
-                  Text(
-                    'Выберите время',
-                    style: GoogleFonts.firaSans(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade900,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Selected times chips
-                  if (selectedTimes.isNotEmpty) ...[
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: selectedTimes.asMap().entries.map((entry) {
-                        final index = entry.key;
-                        final time = entry.value;
-                        return Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppConfig.primaryColor,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                time,
-                                style: GoogleFonts.firaSans(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              GestureDetector(
-                                onTap: () => _removeTimeSlot(index),
-                                child: const Icon(
-                                  Icons.close,
-                                  size: 16,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-
-                  // Time input fields
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: timeFromController,
-                          inputFormatters: [timeMaskFormatter],
-                          keyboardType: TextInputType.number,
-                          decoration: InputDecoration(
-                            hintText: 'Время с',
-                            hintStyle: GoogleFonts.firaSans(
-                              fontSize: 14,
-                              color: Colors.grey.shade500,
-                            ),
-                            filled: true,
-                            fillColor: Colors.grey.shade100,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                          ),
-                          style: GoogleFonts.firaSans(
-                            fontSize: 14,
-                            color: Colors.grey.shade900,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: timeToController,
-                          inputFormatters: [timeMaskFormatter],
-                          keyboardType: TextInputType.number,
-                          decoration: InputDecoration(
-                            hintText: 'Время до',
-                            hintStyle: GoogleFonts.firaSans(
-                              fontSize: 14,
-                              color: Colors.grey.shade500,
-                            ),
-                            filled: true,
-                            fillColor: Colors.grey.shade100,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                          ),
-                          style: GoogleFonts.firaSans(
-                            fontSize: 14,
-                            color: Colors.grey.shade900,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      GestureDetector(
-                        onTap: _addTimeSlot,
-                        child: Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: AppConfig.primaryColor,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Icon(
-                            Icons.add,
-                            color: Colors.white,
-                            size: 24,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+              const SizedBox(height: 22),
+              Text(
+                'Здесь вы можете:\n'
+                '• записывать показатели здоровья\n'
+                '• получать напоминания о важных\nдействиях\n'
+                '• видеть записи в одном месте\n'
+                '• делиться доступом с близкими или\nспециалистами по уходу',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.firaSans(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white,
+                  height: 1.2,
+                  decoration: TextDecoration.none,
+                ),
               ),
-            ),
-          ),
-          // Bottom buttons
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 10,
-                  offset: const Offset(0, -2),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () async {
-                      // Валидация
-                      if (_selectedDays.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Пожалуйста, выберите хотя бы один день',
-                              style: GoogleFonts.firaSans(),
-                            ),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
-                        return;
-                      }
-
-                      if (selectedTimes.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Пожалуйста, добавьте хотя бы один временной слот',
-                              style: GoogleFonts.firaSans(),
-                            ),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
-                        return;
-                      }
-
-                      try {
-                        // Функция для нормализации формата времени (7:00 -> 07:00)
-                        String normalizeTime(String time) {
-                          final parts = time.trim().split(':');
-                          if (parts.length != 2) return time;
-
-                          final hour = parts[0].padLeft(2, '0');
-                          final minute = parts[1].padLeft(2, '0');
-                          return '$hour:$minute';
-                        }
-
-                        // Преобразуем selectedTimes в TimeRange
-                        final timeRanges = selectedTimes.map((timeRange) {
-                          final parts = timeRange.split(' - ');
-                          return TimeRange(
-                            start: normalizeTime(parts[0]),
-                            end: normalizeTime(
-                              parts.length > 1 ? parts[1] : parts[0],
-                            ),
-                          );
-                        }).toList();
-
-                        // Преобразуем выбранные дни в формат API
-                        final apiDaysOfWeek = _selectedDays
-                            .map((index) => _dayApiValues[index])
-                            .toList();
-
-                        // Создаём шаблон задачи через API
-                        await widget.routeSheetCubit.createTemplate(
-                          title: widget.manipulationName,
-                          assignedTo: _selectedEmployee?.id,
-                          daysOfWeek: apiDaysOfWeek,
-                          timeRanges: timeRanges,
-                          startDate: DateTime.now(),
-                        );
-
-                        // Перезагружаем список задач
-                        await widget.routeSheetCubit.loadRouteSheet();
-
-                        widget.onSave(true);
-
-                        if (context.mounted) {
-                          context.pop();
-
-                          // Добавляем небольшую задержку перед показом SnackBar
-                          // чтобы избежать конфликтов с навигацией
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Манипуляция успешно добавлена',
-                                    style: GoogleFonts.firaSans(),
-                                  ),
-                                  backgroundColor: Colors.green,
-                                ),
-                              );
-                            }
-                          });
-                        }
-                      } catch (e) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                'Ошибка при создании манипуляции: $e',
-                                style: GoogleFonts.firaSans(),
-                              ),
-                              backgroundColor: Colors.red,
-                            ),
-                          );
-                        }
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppConfig.primaryColor,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 0,
+              const SizedBox(height: 24),
+              SizedBox(
+                width: 170,
+                child: FilledButton(
+                  onPressed: onConfirm,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppConfig.primaryColor,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
                     ),
-                    child: Text(
-                      'Сохранить',
-                      style: GoogleFonts.firaSans(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
+                  ),
+                  child: Text(
+                    'Понятно',
+                    style: GoogleFonts.firaSans(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => context.pop(),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.grey.shade300,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 0,
-                    ),
-                    child: Text(
-                      'Отмена',
-                      style: GoogleFonts.firaSans(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 }
 
-class MyCustomScrollBehavior extends MaterialScrollBehavior {
+// Tooltip classes removed (showcaseview dependency removed)
+class _HealthDiaryPinnedIndicatorsTooltip extends StatelessWidget {
+  const _HealthDiaryPinnedIndicatorsTooltip();
+
   @override
-  Set<PointerDeviceKind> get dragDevices => {
-    PointerDeviceKind.touch,
-    PointerDeviceKind.mouse,
-  };
+  Widget build(BuildContext context) {
+    final tooltipWidth = (MediaQuery.sizeOf(context).width - 48).clamp(
+      260.0,
+      380.0,
+    );
+
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+      child: SizedBox(
+        width: tooltipWidth,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF65B8C8), Color(0xFF2E8298)],
+            ),
+            borderRadius: BorderRadius.circular(28),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Это показатели, которые\nнужно заполнять\nрегулярно.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.firaSans(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                  height: 1.1,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'По ним приходят напоминания.\n\nНажмите “Заполнить”, чтобы\nзаписать показатель',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.firaSans(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white,
+                  height: 1.2,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HealthDiaryPinnedValueTooltip extends StatelessWidget {
+  const _HealthDiaryPinnedValueTooltip();
+
+  @override
+  Widget build(BuildContext context) {
+    return const _HealthDiaryStepTooltip(text: 'Введите значение\nпоказателя');
+  }
+}
+
+class _HealthDiaryPinnedTimeTooltip extends StatelessWidget {
+  const _HealthDiaryPinnedTimeTooltip();
+
+  @override
+  Widget build(BuildContext context) {
+    return const _HealthDiaryStepTooltip(
+      text:
+          'Впишите время, когда нужно напоминать\nо заполнении показателя и нажмите +,\nчтобы добавить',
+    );
+  }
+}
+
+class _HealthDiaryPinnedSaveTooltip extends StatelessWidget {
+  const _HealthDiaryPinnedSaveTooltip();
+
+  @override
+  Widget build(BuildContext context) {
+    return const _HealthDiaryStepTooltip(text: 'Нажмите сохранить');
+  }
+}
+
+class _HealthDiaryAllIndicatorsTooltip extends StatelessWidget {
+  const _HealthDiaryAllIndicatorsTooltip();
+
+  @override
+  Widget build(BuildContext context) {
+    final tooltipWidth = (MediaQuery.sizeOf(context).width - 40).clamp(
+      240.0,
+      360.0,
+    );
+
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+      child: SizedBox(
+        width: tooltipWidth,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF65B8C8), Color(0xFF2E8298)],
+            ),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Эти показатели можно\nзаписывать при\nнеобходимости',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.firaSans(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                  height: 1.1,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Нажмите на раздел, чтобы открыть\nпоказатели',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.firaSans(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white,
+                  height: 1.2,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HealthDiaryAllIndicatorsSelectTooltip extends StatelessWidget {
+  const _HealthDiaryAllIndicatorsSelectTooltip();
+
+  @override
+  Widget build(BuildContext context) {
+    return const _HealthDiaryStepTooltip(
+      text: 'Выберите показатель\nи нажмите на него\nчтобы заполнить',
+    );
+  }
+}
+
+class _HealthDiaryAllIndicatorsCareSaveTooltip extends StatelessWidget {
+  const _HealthDiaryAllIndicatorsCareSaveTooltip();
+
+  @override
+  Widget build(BuildContext context) {
+    return const _HealthDiaryStepTooltip(
+      text: 'Заполните показатель и\nнажмите "Сохранить"',
+    );
+  }
+}
+
+class _HealthDiarySavedTooltip extends StatelessWidget {
+  const _HealthDiarySavedTooltip();
+
+  @override
+  Widget build(BuildContext context) {
+    return const _HealthDiaryStepTooltip(text: 'Запись сохранена!');
+  }
+}
+
+class _HealthDiaryTopSuccessOverlay extends StatelessWidget {
+  const _HealthDiaryTopSuccessOverlay({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: SafeArea(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: 1),
+                duration: const Duration(milliseconds: 420),
+                curve: Curves.easeOutBack,
+                builder: (context, value, _) {
+                  final fade = Curves.easeOut.transform(value);
+                  return Transform.translate(
+                    offset: Offset(0, -18 * (1 - fade)),
+                    child: Opacity(opacity: fade, child: child),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HealthDiaryStepTooltip extends StatelessWidget {
+  const _HealthDiaryStepTooltip({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final tooltipWidth = (MediaQuery.sizeOf(context).width - 40).clamp(
+      240.0,
+      360.0,
+    );
+
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+      child: SizedBox(
+        width: tooltipWidth,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF65B8C8), Color(0xFF2E8298)],
+            ),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.firaSans(
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+              height: 1.15,
+              decoration: TextDecoration.none,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

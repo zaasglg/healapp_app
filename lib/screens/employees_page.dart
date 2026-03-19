@@ -15,6 +15,7 @@ import '../config/app_config.dart';
 import '../core/network/api_client.dart';
 import '../utils/app_icons.dart';
 import '../utils/performance_utils.dart';
+import '../core/logging/app_logger.dart';
 
 class EmployeesPage extends StatefulWidget {
   const EmployeesPage({super.key});
@@ -1013,7 +1014,11 @@ class _EmployeesPageState extends State<EmployeesPage> {
   /// Виджет аватара сотрудника
   Widget _buildEmployeeAvatar(Employee employee, OrganizationState orgState) {
     // Логируем для отладки
-    print('Employee avatar: ${employee.avatarUrl} for ${employee.fullName}');
+    log.debug(
+      'Employee avatar',
+      context: LogContext.ui,
+      extra: {'avatarUrl': employee.avatarUrl, 'fullName': employee.fullName},
+    );
 
     return Container(
       width: 48,
@@ -1032,7 +1037,11 @@ class _EmployeesPageState extends State<EmployeesPage> {
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stackTrace) {
                   // Если ошибка загрузки фото, показываем инициалы
-                  print('Error loading avatar: $error');
+                  log.warning(
+                    'Error loading avatar',
+                    context: LogContext.ui,
+                    error: error,
+                  );
                   return Center(
                     child: Text(
                       _getInitialsForEmployee(employee, orgState),

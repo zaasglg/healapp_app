@@ -3,14 +3,15 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../config/app_config.dart';
-import '../../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 import '../../bloc/auth/auth_bloc.dart';
 import '../../bloc/auth/auth_event.dart';
 import '../../bloc/auth/auth_state.dart';
 
 class VerifyCodePage extends StatefulWidget {
   final String phone;
-  const VerifyCodePage({super.key, required this.phone});
+  final String? inviteToken;
+  const VerifyCodePage({super.key, required this.phone, this.inviteToken});
 
   @override
   State<VerifyCodePage> createState() => _VerifyCodePageState();
@@ -132,7 +133,7 @@ class _VerifyCodePageState extends State<VerifyCodePage> {
                               const SizedBox(height: 8),
                               TextFormField(
                                 decoration: _inputDecoration('Код'),
-                                keyboardType: TextInputType.number,
+                                keyboardType: TextInputType.text,
                                 validator: (v) =>
                                     (v == null || v.trim().length < 4)
                                     ? 'Введите корректный код'

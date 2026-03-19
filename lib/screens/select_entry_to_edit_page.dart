@@ -4,7 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../config/app_config.dart';
 import '../utils/app_icons.dart';
-import '../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../bloc/diary/diary_event.dart';
 import '../bloc/diary/diary_bloc.dart';
@@ -139,38 +139,35 @@ class _SelectEntryToEditPageState extends State<SelectEntryToEditPage> {
 
   /// Форматирует значение записи для отображения
   String _formatEntryValue(DiaryEntry entry) {
-    final value = entry.value;
+    final valueMap = entry.value;
 
-    // Обработка булевых значений
-    if (value is bool) {
-      return value ? 'Было' : 'Не было';
-    }
-
-    // Обработка Map (например {value: false} или blood_pressure)
-    if (value is Map) {
-      // Для blood_pressure
-      if (entry.parameterKey == 'blood_pressure') {
-        dynamic bpValue = value;
-        // Если значение вложено в {value: {...}}, извлекаем его
-        if (bpValue.containsKey('value') && bpValue['value'] is Map) {
-          bpValue = bpValue['value'];
-        }
+    // Для blood_pressure — специальная обработка
+    if (entry.parameterKey == 'blood_pressure') {
+      dynamic bpValue = valueMap;
+      while (bpValue is Map &&
+          bpValue.containsKey('value') &&
+          bpValue['value'] is Map) {
+        bpValue = bpValue['value'];
+      }
+      if (bpValue is Map) {
         final systolic = bpValue['systolic'] ?? bpValue['sys'] ?? 0;
         final diastolic = bpValue['diastolic'] ?? bpValue['dia'] ?? 0;
         return '$systolic/$diastolic мм рт.ст.';
       }
+    }
 
-      // Для других Map значений - проверяем вложенное value
-      if (value.containsKey('value')) {
-        final innerValue = value['value'];
-        if (innerValue is bool) {
-          return innerValue ? 'Было' : 'Не было';
-        }
-        return innerValue?.toString() ?? '—';
-      }
+    // Извлекаем рав-значение из Map
+    dynamic value = valueMap;
+    while (value is Map && value.containsKey('value')) {
+      value = value['value'];
+    }
+    if (value is Map && (value as Map).isNotEmpty) {
+      value = value.values.first;
+    }
 
-      // Попытка вывести все значения из Map
-      return value.values.map((v) => v.toString()).join(', ');
+    // Обработка булевых значений
+    if (value is bool) {
+      return value ? 'Было' : 'Не было';
     }
 
     // Обработка строк "true"/"false"
@@ -619,33 +616,34 @@ class _EntriesSelectionDialogState extends State<_EntriesSelectionDialog> {
   }
 
   String _formatEntryValue(DiaryEntry entry) {
-    final value = entry.value;
+    final valueMap = entry.value;
 
-    if (value is bool) {
-      return value ? 'Было' : 'Не было';
-    }
-
-    if (value is Map) {
-      if (entry.parameterKey == 'blood_pressure') {
-        dynamic bpValue = value;
-        // Если значение вложено в {value: {...}}, извлекаем его
-        if (bpValue.containsKey('value') && bpValue['value'] is Map) {
-          bpValue = bpValue['value'];
-        }
+    // Для blood_pressure — специальная обработка
+    if (entry.parameterKey == 'blood_pressure') {
+      dynamic bpValue = valueMap;
+      while (bpValue is Map &&
+          bpValue.containsKey('value') &&
+          bpValue['value'] is Map) {
+        bpValue = bpValue['value'];
+      }
+      if (bpValue is Map) {
         final systolic = bpValue['systolic'] ?? bpValue['sys'] ?? 0;
         final diastolic = bpValue['diastolic'] ?? bpValue['dia'] ?? 0;
         return '$systolic/$diastolic мм рт.ст.';
       }
+    }
 
-      if (value.containsKey('value')) {
-        final innerValue = value['value'];
-        if (innerValue is bool) {
-          return innerValue ? 'Было' : 'Не было';
-        }
-        return innerValue?.toString() ?? '—';
-      }
+    // Извлекаем рав-значение из Map
+    dynamic value = valueMap;
+    while (value is Map && value.containsKey('value')) {
+      value = value['value'];
+    }
+    if (value is Map && (value as Map).isNotEmpty) {
+      value = value.values.first;
+    }
 
-      return value.values.map((v) => v.toString()).join(', ');
+    if (value is bool) {
+      return value ? 'Было' : 'Не было';
     }
 
     if (value is String) {
@@ -1182,9 +1180,17 @@ class _EntriesSelectionDialogState extends State<_EntriesSelectionDialog> {
       if (mounted) Navigator.of(context).pop();
 
       // Логируем детально в консоль
-      print('Ошибка при сохранении закрепленных параметров');
-      print('diaryId=${widget.diaryId}, patientId=${widget.patientId}');
-      print('Payload: ${pinnedParameters.map((p) => p.toJson()).toList()}');
+      log.error(
+        'Error saving pinned parameters',
+        context: LogContext.diary,
+        error: e,
+        stackTrace: st,
+        extra: {
+          'diaryId': widget.diaryId,
+          'patientId': widget.patientId,
+          'payload': pinnedParameters.map((p) => p.toJson()).toList(),
+        },
+      );
 
       // Показываем ошибку пользователю
       if (mounted) {

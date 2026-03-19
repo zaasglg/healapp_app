@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -9,11 +10,15 @@ import '../../config/app_config.dart';
 import '../../bloc/auth/auth_bloc.dart';
 import '../../bloc/auth/auth_event.dart';
 import '../../bloc/auth/auth_state.dart';
+import '../../repositories/invitation_repository.dart';
+import '../../core/network/api_exceptions.dart';
 
 enum Role { nursingHome, agency, privateCaregiver }
 
 class RegisterPage extends StatefulWidget {
-  const RegisterPage({super.key});
+  final String? inviteToken;
+
+  const RegisterPage({super.key, this.inviteToken});
   static const String routeName = '/register';
 
   @override
@@ -27,11 +32,103 @@ class _RegisterPageState extends State<RegisterPage> {
     filter: {"#": RegExp(r'\d')},
   );
   final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _firstNameController = TextEditingController();
+  final TextEditingController _lastNameController = TextEditingController();
+  final TextEditingController _organizationNameController =
+      TextEditingController();
+  final TextEditingController _addressController = TextEditingController();
 
   String _password = '';
   String _passwordConfirmation = '';
   int _step = 0; // 0 = choose role, 1 = fill details
   Role? _selectedRole;
+  bool _isAgree = false;
+  bool _isMarketingAgree = false;
+  bool _isInviteLoading = false;
+  String? _inviteError;
+  bool _isDiaryInviteFlow = false;
+
+  bool get _isInviteFlow =>
+      (widget.inviteToken != null && widget.inviteToken!.isNotEmpty);
+
+  bool _isDiaryInvite(Invitation invitation) {
+    final values = <String>[
+      invitation.type,
+      invitation.organizationType,
+      invitation.role,
+    ];
+    for (final raw in values) {
+      final value = raw.toLowerCase();
+      if (value.contains('diary') ||
+          value.contains('client') ||
+          value.contains('patient')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isInviteFlow) {
+      _loadInvitationType();
+    }
+  }
+
+  Future<void> _loadInvitationType() async {
+    setState(() {
+      _isInviteLoading = true;
+      _inviteError = null;
+    });
+
+    try {
+      final invitation = await invitationRepository.getInvitation(
+        widget.inviteToken!,
+      );
+
+      final isDiaryInvite = _isDiaryInvite(invitation);
+
+      setState(() {
+        _isDiaryInviteFlow = isDiaryInvite;
+      });
+
+      Role? role;
+      if (invitation.organizationType == 'pansionat') {
+        role = Role.nursingHome;
+      } else if (invitation.organizationType == 'agency') {
+        role = Role.agency;
+      } else if (isDiaryInvite) {
+        // Для diary invites не предустанавливаем роль - даем пользователю выбрать
+        role = null;
+      }
+
+      if (role == null && !isDiaryInvite) {
+        setState(() {
+          _inviteError = 'Тип организации недоступен для регистрации';
+          _isInviteLoading = false;
+        });
+        return;
+      }
+
+      setState(() {
+        _selectedRole = role; // Предустанавливаем роль, но оставляем шаг 0
+        _step = 0; // Остаемся на шаге выбора роли
+        _isAgree = false;
+        _isInviteLoading = false;
+      });
+    } on ApiException catch (e) {
+      setState(() {
+        _inviteError = e.message;
+        _isInviteLoading = false;
+      });
+    } catch (_) {
+      setState(() {
+        _inviteError = 'Не удалось загрузить приглашение';
+        _isInviteLoading = false;
+      });
+    }
+  }
 
   InputDecoration _inputDecoration(String hint) {
     return InputDecoration(
@@ -51,14 +148,17 @@ class _RegisterPageState extends State<RegisterPage> {
   }
 
   /// Получить account_type на основе выбранного Role
-  String _getAccountType(Role role) {
+  /// Для приглашений используется другое значение для privateCaregiver
+  String _getAccountType(Role role, {bool forInvite = false}) {
     switch (role) {
       case Role.nursingHome:
         return 'pansionat';
       case Role.agency:
         return 'agency';
       case Role.privateCaregiver:
-        return 'specialist';
+        // Для приглашений API ожидает 'private_caregiver'
+        // Для обычной регистрации - 'specialist'
+        return forInvite ? 'private_caregiver' : 'specialist';
     }
   }
 
@@ -88,9 +188,29 @@ class _RegisterPageState extends State<RegisterPage> {
 
       _formKey.currentState?.save();
       final phone = _phoneMask.getUnmaskedText();
-      final accountType = _getAccountType(_selectedRole!);
 
-      // Отправляем событие регистрации через BLoC
+      if (_isInviteFlow) {
+        // Для приглашений используем специальное значение accountType
+        final accountType = _getAccountType(_selectedRole!, forInvite: true);
+        // Регистрация по приглашению через AuthBloc
+        context.read<AuthBloc>().add(
+          AuthRegisterWithInviteRequested(
+            inviteToken: widget.inviteToken!,
+            phone: phone,
+            password: _password,
+            passwordConfirmation: _passwordConfirmation,
+            firstName: _firstNameController.text.trim(),
+            lastName: _lastNameController.text.trim(),
+            accountType: accountType,
+            organizationName: _organizationNameController.text.trim(),
+            address: _addressController.text.trim(),
+          ),
+        );
+        return;
+      }
+
+      // Обычная регистрация
+      final accountType = _getAccountType(_selectedRole!, forInvite: false);
       context.read<AuthBloc>().add(
         AuthRegisterRequested(
           phone: phone,
@@ -101,6 +221,7 @@ class _RegisterPageState extends State<RegisterPage> {
           accountType: accountType,
           organizationName: null,
           referralCode: null, // Реферальный код больше не используется
+          isAgree: _isAgree,
         ),
       );
     }
@@ -108,17 +229,72 @@ class _RegisterPageState extends State<RegisterPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isInviteFlow && _isInviteLoading) {
+      return const Scaffold(
+        backgroundColor: AppConfig.primaryColor,
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_isInviteFlow && _inviteError != null) {
+      return Scaffold(
+        backgroundColor: AppConfig.primaryColor,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error, color: Colors.white, size: 48),
+                const SizedBox(height: 12),
+                Text(
+                  _inviteError!,
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.firaSans(
+                    fontSize: 16,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () {
+                    final inviteToken = widget.inviteToken;
+                    if (inviteToken != null && inviteToken.isNotEmpty) {
+                      context.push('/login?inviteToken=$inviteToken');
+                    } else {
+                      context.push('/login');
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppConfig.primaryColor,
+                  ),
+                  child: Text(
+                    'Перейти к входу',
+                    style: GoogleFonts.firaSans(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return BlocListener<AuthBloc, AuthState>(
       listener: (context, state) {
         if (ModalRoute.of(context)?.isCurrent ?? false) {
           // Навигация на страницу подтверждения SMS после регистрации
           if (state is AuthAwaitingSmsVerification) {
-            context.push('/verify-code/${state.phone}');
-          }
-
-          // Навигация при успешной авторизации (после подтверждения)
-          if (state is AuthAuthenticated) {
-            context.go('/home');
+            // Передаем inviteToken как query параметр для后续 обработки
+            final inviteToken = widget.inviteToken;
+            if (inviteToken != null && inviteToken.isNotEmpty) {
+              context.push(
+                '/verify-code/${state.phone}?inviteToken=$inviteToken',
+              );
+            } else {
+              context.push('/verify-code/${state.phone}');
+            }
           }
 
           // Показ ошибки при неудаче
@@ -196,7 +372,9 @@ class _RegisterPageState extends State<RegisterPage> {
                           const SizedBox(height: 12),
                         ],
                         Text(
-                          'Регистрация',
+                          _isInviteFlow
+                              ? 'Регистрация по приглашению'
+                              : 'Регистрация',
                           textAlign: TextAlign.center,
                           style: GoogleFonts.firaSans(
                             fontSize: 26,
@@ -238,12 +416,14 @@ class _RegisterPageState extends State<RegisterPage> {
                             subtitle: 'Агентство по предоставлению услуг ухода',
                             role: Role.agency,
                           ),
-                          const SizedBox(height: 12),
-                          _buildRoleCard(
-                            title: 'Частная сиделка',
-                            subtitle: 'Индивидуальный специалист по уходу',
-                            role: Role.privateCaregiver,
-                          ),
+                          if (!_isInviteFlow || _isDiaryInviteFlow) ...[
+                            const SizedBox(height: 12),
+                            _buildRoleCard(
+                              title: 'Частная сиделка',
+                              subtitle: 'Индивидуальный специалист по уходу',
+                              role: Role.privateCaregiver,
+                            ),
+                          ],
                         ] else ...[
                           Form(
                             key: _formKey,
@@ -311,6 +491,161 @@ class _RegisterPageState extends State<RegisterPage> {
                                   onSaved: (v) =>
                                       _passwordConfirmation = (v ?? '').trim(),
                                 ),
+                                const SizedBox(height: 12),
+
+                                // Поля для организации (только для pansionat/agency по приглашению)
+                                if (_isInviteFlow &&
+                                    !_isDiaryInviteFlow &&
+                                    _selectedRole != null &&
+                                    _selectedRole != Role.privateCaregiver) ...[
+                                  Text(
+                                    'Название организации',
+                                    style: GoogleFonts.firaSans(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  TextFormField(
+                                    controller: _organizationNameController,
+                                    decoration: _inputDecoration(
+                                      'Название организации',
+                                    ),
+                                    validator: (v) =>
+                                        (v == null || v.trim().isEmpty)
+                                        ? 'Введите название организации'
+                                        : null,
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    'Адрес',
+                                    style: GoogleFonts.firaSans(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  TextFormField(
+                                    controller: _addressController,
+                                    decoration: _inputDecoration('Адрес'),
+                                    validator: (v) =>
+                                        (v == null || v.trim().isEmpty)
+                                        ? 'Введите адрес'
+                                        : null,
+                                  ),
+                                  const SizedBox(height: 12),
+                                ],
+
+                                // Checkbox Agreement
+                                Row(
+                                  children: [
+                                    SizedBox(
+                                      height: 24,
+                                      width: 24,
+                                      child: Checkbox(
+                                        value: _isAgree,
+                                        activeColor: AppConfig.primaryColor,
+                                        onChanged: (v) {
+                                          setState(() {
+                                            _isAgree = v ?? false;
+                                          });
+                                        },
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text.rich(
+                                        TextSpan(
+                                          style: GoogleFonts.firaSans(
+                                            fontSize: 12,
+                                            color: Colors.grey.shade700,
+                                          ),
+                                          children: [
+                                            TextSpan(
+                                              text: 'Я согласен',
+                                              style: const TextStyle(
+                                                color: AppConfig.primaryColor,
+                                                decoration:
+                                                    TextDecoration.underline,
+                                              ),
+                                              recognizer: TapGestureRecognizer()
+                                                ..onTap = () {
+                                                  context.push('/agreement');
+                                                },
+                                            ),
+                                            TextSpan(
+                                              text:
+                                                  ' на обработку моих персональных данных, в соответствии с ',
+                                              recognizer: TapGestureRecognizer()
+                                                ..onTap = () {
+                                                  setState(() {
+                                                    _isAgree = !_isAgree;
+                                                  });
+                                                },
+                                            ),
+                                            TextSpan(
+                                              text: 'политикой',
+                                              style: const TextStyle(
+                                                color: AppConfig.primaryColor,
+                                                decoration:
+                                                    TextDecoration.underline,
+                                              ),
+                                              recognizer: TapGestureRecognizer()
+                                                ..onTap = () {
+                                                  context.push('/policy');
+                                                },
+                                            ),
+                                            TextSpan(
+                                              text:
+                                                  ' в отношении обработки персональных данных',
+                                              recognizer: TapGestureRecognizer()
+                                                ..onTap = () {
+                                                  setState(() {
+                                                    _isAgree = !_isAgree;
+                                                  });
+                                                },
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                // Checkbox Marketing Agreement
+                                Row(
+                                  children: [
+                                    SizedBox(
+                                      height: 24,
+                                      width: 24,
+                                      child: Checkbox(
+                                        value: _isMarketingAgree,
+                                        activeColor: AppConfig.primaryColor,
+                                        onChanged: (v) {
+                                          setState(() {
+                                            _isMarketingAgree = v ?? false;
+                                          });
+                                        },
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: GestureDetector(
+                                        onTap: () {
+                                          setState(() {
+                                            _isMarketingAgree =
+                                                !_isMarketingAgree;
+                                          });
+                                        },
+                                        child: Text(
+                                          'Даю согласие на получению информационных и рекламных сообщений',
+                                          style: GoogleFonts.firaSans(
+                                            fontSize: 12,
+                                            color: Colors.grey.shade700,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                                 const SizedBox(height: 18),
                                 BlocBuilder<AuthBloc, AuthState>(
                                   builder: (context, state) {
@@ -358,7 +693,17 @@ class _RegisterPageState extends State<RegisterPage> {
                                 const SizedBox(height: 14),
                                 Center(
                                   child: TextButton(
-                                    onPressed: () => context.push('/login'),
+                                    onPressed: () {
+                                      final inviteToken = widget.inviteToken;
+                                      if (inviteToken != null &&
+                                          inviteToken.isNotEmpty) {
+                                        context.push(
+                                          '/login?inviteToken=$inviteToken',
+                                        );
+                                      } else {
+                                        context.push('/login');
+                                      }
+                                    },
                                     child: Text.rich(
                                       TextSpan(
                                         children: [
@@ -409,6 +754,7 @@ class _RegisterPageState extends State<RegisterPage> {
       onTap: () => setState(() {
         _selectedRole = role;
         _step = 1;
+        _isAgree = false;
       }),
       child: Container(
         width: double.infinity,
@@ -457,6 +803,10 @@ class _RegisterPageState extends State<RegisterPage> {
   @override
   void dispose() {
     _passwordController.dispose();
+    _firstNameController.dispose();
+    _lastNameController.dispose();
+    _organizationNameController.dispose();
+    _addressController.dispose();
     super.dispose();
   }
 }

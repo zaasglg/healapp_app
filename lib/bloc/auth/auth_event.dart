@@ -44,6 +44,7 @@ class AuthRegisterRequested extends AuthEvent {
   final String accountType;
   final String? organizationName;
   final String? referralCode;
+  final bool isAgree;
 
   const AuthRegisterRequested({
     required this.phone,
@@ -52,6 +53,7 @@ class AuthRegisterRequested extends AuthEvent {
     required this.firstName,
     required this.lastName,
     required this.accountType,
+    required this.isAgree,
     this.organizationName,
     this.referralCode,
   });
@@ -64,6 +66,7 @@ class AuthRegisterRequested extends AuthEvent {
     firstName,
     lastName,
     accountType,
+    isAgree,
     organizationName,
     referralCode,
   ];
@@ -114,4 +117,47 @@ class AuthUpdateProfileRequested extends AuthEvent {
 
   @override
   List<Object?> get props => [firstName, lastName, city];
+}
+
+/// Событие истечения сессии (401 от сервера)
+class AuthSessionExpired extends AuthEvent {
+  const AuthSessionExpired();
+}
+
+/// Событие регистрации по приглашению
+class AuthRegisterWithInviteRequested extends AuthEvent {
+  final String inviteToken;
+  final String phone;
+  final String password;
+  final String passwordConfirmation;
+  final String firstName;
+  final String lastName;
+  final String accountType;
+  final String? organizationName;
+  final String? address;
+
+  const AuthRegisterWithInviteRequested({
+    required this.inviteToken,
+    required this.phone,
+    required this.password,
+    required this.passwordConfirmation,
+    required this.firstName,
+    required this.lastName,
+    required this.accountType,
+    this.organizationName,
+    this.address,
+  });
+
+  @override
+  List<Object?> get props => [
+    inviteToken,
+    phone,
+    password,
+    passwordConfirmation,
+    firstName,
+    lastName,
+    accountType,
+    organizationName,
+    address,
+  ];
 }

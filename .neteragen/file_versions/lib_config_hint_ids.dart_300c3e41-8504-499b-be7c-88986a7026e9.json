@@ -1,0 +1,16 @@
+{
+  "file_name": "lib/config/hint_ids.dart",
+  "revision_id": "300c3e41-8504-499b-be7c-88986a7026e9",
+  "metadata": {
+    "timestamp": "2026-03-08T02:24:14.333868",
+    "type": "cache_version",
+    "source": "initial_from_disk",
+    "size": 284,
+    "is_reverted": false,
+    "git_branch_name": "main",
+    "agent_name": "Cody",
+    "description": null
+  },
+  "content": "abstract final class HintIds {\n  static const String homeQuickStart = 'home_quick_start';\n  static const String wardsAddCard = 'wards_add_card';\n  static const String diariesCreateDiary = 'diaries_create_diary';\n  static const String newWardPersonalData = 'new_ward_personal_data';\n}\n",
+  "saved_at": "2026-03-08T02:24:14.333884"
+}

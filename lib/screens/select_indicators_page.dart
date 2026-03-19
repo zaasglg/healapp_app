@@ -5,18 +5,27 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:toastification/toastification.dart';
 import '../config/app_config.dart';
+import '../config/hint_ids.dart';
 import '../utils/app_icons.dart';
 import '../repositories/patient_repository.dart';
 import '../repositories/diary_repository.dart';
 import '../utils/health_diary/indicator_utils.dart';
+import '../bloc/hint/hint_bloc.dart';
+import '../bloc/hint/hint_event.dart';
 import '../bloc/diary/diary_bloc.dart';
 import '../bloc/diary/diary_event.dart';
 import '../bloc/diary/diary_state.dart';
+import '../core/logging/app_logger.dart';
 
 class SelectIndicatorsPage extends StatefulWidget {
   final Patient? patient;
+  final bool showRegularIndicatorsHint;
 
-  const SelectIndicatorsPage({super.key, this.patient});
+  const SelectIndicatorsPage({
+    super.key,
+    this.patient,
+    this.showRegularIndicatorsHint = false,
+  });
   static const String routeName = '/select-indicators';
 
   @override
@@ -65,9 +74,72 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
     // Убрана искусственная задержка для быстрой загрузки
     _isInitialLoading = false;
     _loadSystemCustomIndicators();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!widget.showRegularIndicatorsHint &&
+          !AppConfig.demoHintsAlwaysVisible) {
+        return;
+      }
+      context.read<HintBloc>().add(
+        const HintShowRequested(HintIds.selectIndicatorsRegular),
+      );
+    });
   }
 
   Patient? get _patient => widget.patient;
+
+  void _dismissRegularIndicatorsHintIfVisible() {
+    if (context.read<HintBloc>().state.isHintVisible(
+      HintIds.selectIndicatorsRegular,
+    )) {
+      context.read<HintBloc>().add(
+        const HintDismissRequested(HintIds.selectIndicatorsRegular),
+      );
+    }
+  }
+
+  void _dismissPinnedAddedHintIfVisible() {
+    if (context.read<HintBloc>().state.isHintVisible(
+      HintIds.selectIndicatorsPinnedAdded,
+    )) {
+      context.read<HintBloc>().add(
+        const HintDismissRequested(HintIds.selectIndicatorsPinnedAdded),
+      );
+    }
+  }
+
+  void _dismissAdditionalIndicatorsHintIfVisible() {
+    if (context.read<HintBloc>().state.isHintVisible(
+      HintIds.selectIndicatorsAdditional,
+    )) {
+      context.read<HintBloc>().add(
+        const HintDismissRequested(HintIds.selectIndicatorsAdditional),
+      );
+    }
+  }
+
+  void _dismissReadyHintIfVisible() {
+    if (context.read<HintBloc>().state.isHintVisible(
+      HintIds.selectIndicatorsReady,
+    )) {
+      context.read<HintBloc>().add(
+        const HintDismissRequested(HintIds.selectIndicatorsReady),
+      );
+    }
+  }
+
+  void _dismissIndicatorsHintIfVisible() {
+    _dismissRegularIndicatorsHintIfVisible();
+    _dismissPinnedAddedHintIfVisible();
+    _dismissAdditionalIndicatorsHintIfVisible();
+    _dismissReadyHintIfVisible();
+  }
+
+  void _showAdditionalIndicatorsHint() {
+    context.read<HintBloc>().add(
+      const HintShowRequested(HintIds.selectIndicatorsAdditional),
+    );
+  }
 
   void _openPinnedIndicatorsDialog() {
     showDialog(
@@ -84,12 +156,21 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
             _pinnedIndicators.clear();
             _pinnedIndicators.addAll(selected);
           });
+          if (selected.isNotEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              context.read<HintBloc>().add(
+                const HintShowRequested(HintIds.selectIndicatorsPinnedAdded),
+              );
+            });
+          }
         },
       ),
     );
   }
 
   void _openAllIndicatorsDialog() {
+    _dismissIndicatorsHintIfVisible();
     showDialog(
       context: context,
       builder: (context) => _IndicatorsSelectionDialog(
@@ -106,6 +187,14 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
             _allIndicators.clear();
             _allIndicators.addAll(selected);
           });
+          if (selected.isNotEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              context.read<HintBloc>().add(
+                const HintShowRequested(HintIds.selectIndicatorsReady),
+              );
+            });
+          }
         },
       ),
     );
@@ -205,11 +294,16 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
     }
 
     // Логируем patient_id
-    debugPrint(
-      '🔍 Создание дневника для пациента: ${_patient!.fullName}, ID: ${_patient!.id}',
+    log.debug(
+      'Creating diary for patient',
+      context: LogContext.diary,
+      extra: {
+        'patientName': _patient!.fullName,
+        'patientId': _patient!.id,
+        'pinnedIndicators': _pinnedIndicators.toList(),
+        'allIndicators': _allIndicators.toList(),
+      },
     );
-    debugPrint('📌 Закрепленные индикаторы: $_pinnedIndicators');
-    debugPrint('📋 Все индикаторы: $_allIndicators');
 
     // Преобразуем выбранные индикаторы в PinnedParameter
     final pinnedParameters = _pinnedIndicators.map((indicator) {
@@ -230,7 +324,10 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
     // Устанавливаем таймаут для безопасности (15 секунд)
     Future.delayed(const Duration(seconds: 15), () {
       if (mounted && _isLoading) {
-        debugPrint('⏱️ Таймаут создания дневника (15 сек)');
+        log.warning(
+          'Diary creation timeout (15 sec)',
+          context: LogContext.diary,
+        );
         setState(() => _isLoading = false);
         toastification.show(
           context: context,
@@ -258,18 +355,24 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
   }
 
   void _handleDiaryState(BuildContext context, DiaryState state) {
-    debugPrint('🔔 Получено состояние: ${state.runtimeType}');
+    log.debug(
+      'Diary state received',
+      context: LogContext.diary,
+      extra: {'state': state.runtimeType.toString()},
+    );
 
     if (state is DiaryLoading) {
-      debugPrint('⏳ Загрузка...');
+      log.debug('Loading...', context: LogContext.diary);
       // Убедимся, что состояние загрузки установлено
       if (!_isLoading) {
         setState(() => _isLoading = true);
       }
     } else if (state is DiaryCreatedState) {
       setState(() => _isLoading = false);
-      debugPrint(
-        '✅ Дневник создан: ID=${state.diary.id}, patientId=${state.diary.patientId}',
+      log.info(
+        'Diary created',
+        context: LogContext.diary,
+        extra: {'diaryId': state.diary.id, 'patientId': state.diary.patientId},
       );
       toastification.show(
         context: context,
@@ -281,12 +384,14 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
       );
       // Переходим на страницу дневника с правильными параметрами
       context.pushReplacement(
-        '/health-diary/${state.diary.id}/${state.diary.patientId}',
+        '/health-diary/${state.diary.id}/${state.diary.patientId}?showDiaryIntroHint=1',
       );
     } else if (state is DiaryConflict) {
       setState(() => _isLoading = false);
-      debugPrint(
-        '⚠️ Конфликт: дневник уже существует (ID=${state.existingDiaryId})',
+      log.warning(
+        'Diary conflict: already exists',
+        context: LogContext.diary,
+        extra: {'existingDiaryId': state.existingDiaryId},
       );
       toastification.show(
         context: context,
@@ -300,16 +405,21 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
       // Используем existingDiaryId и patientId из _patient
       if (_patient != null) {
         context.pushReplacement(
-          '/health-diary/${state.existingDiaryId}/${_patient!.id}',
+          '/health-diary/${state.existingDiaryId}/${_patient!.id}?showDiaryIntroHint=1',
         );
       } else {
-        debugPrint(
-          '❌ Ошибка: пациент не определен при переходе к существующему дневнику',
+        log.error(
+          'Patient not defined for navigation',
+          context: LogContext.diary,
         );
       }
     } else if (state is DiaryError) {
       setState(() => _isLoading = false);
-      debugPrint('❌ Ошибка создания дневника: ${state.message}');
+      log.error(
+        'Diary creation error',
+        context: LogContext.diary,
+        error: state.message,
+      );
       toastification.show(
         context: context,
         type: ToastificationType.error,
@@ -321,7 +431,11 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
     } else if (state is DiaryInitial || state is DiariesLoaded) {
       // Сбрасываем загрузку для любого другого состояния
       if (_isLoading) {
-        debugPrint('🔄 Сброс состояния загрузки для ${state.runtimeType}');
+        log.debug(
+          'Reset loading state',
+          context: LogContext.diary,
+          extra: {'state': state.runtimeType.toString()},
+        );
         setState(() => _isLoading = false);
       }
     }
@@ -407,7 +521,6 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
                         : Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              // Info box
                               Container(
                                 padding: const EdgeInsets.all(16),
                                 decoration: BoxDecoration(
@@ -423,15 +536,15 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
                                 ),
                               ),
                               const SizedBox(height: 16),
-
-                              // Pinned indicators section
                               Container(
                                 padding: const EdgeInsets.all(20),
                                 decoration: BoxDecoration(
                                   gradient: LinearGradient(
                                     colors: [
                                       AppConfig.primaryColor,
-                                      AppConfig.primaryColor.withOpacity(0.8),
+                                      AppConfig.primaryColor.withValues(
+                                        alpha: 0.8,
+                                      ),
                                     ],
                                     begin: Alignment.topLeft,
                                     end: Alignment.bottomRight,
@@ -439,7 +552,9 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
                                   borderRadius: BorderRadius.circular(16),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.black.withOpacity(0.1),
+                                      color: Colors.black.withValues(
+                                        alpha: 0.1,
+                                      ),
                                       blurRadius: 12,
                                       offset: const Offset(0, 4),
                                     ),
@@ -469,17 +584,18 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
                                     ElevatedButton(
                                       style: ElevatedButton.styleFrom(
                                         backgroundColor: Colors.white,
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 12,
-                                        ),
+                                        padding:
+                                            const EdgeInsets.symmetric(
+                                              vertical: 12,
+                                            ),
                                         shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(12),
                                         ),
                                         elevation: 0,
                                       ),
-                                      onPressed: _openPinnedIndicatorsDialog,
+                                      onPressed:
+                                          _openPinnedIndicatorsDialog,
                                       child: Text(
                                         'Выбрать (${_pinnedIndicators.length}/3)',
                                         style: GoogleFonts.firaSans(
@@ -493,8 +609,6 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
                                 ),
                               ),
                               const SizedBox(height: 16),
-
-                              // All indicators section
                               Container(
                                 padding: const EdgeInsets.all(20),
                                 decoration: BoxDecoration(
@@ -502,7 +616,9 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
                                   borderRadius: BorderRadius.circular(16),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.black.withOpacity(0.06),
+                                      color: Colors.black.withValues(
+                                        alpha: 0.06,
+                                      ),
                                       blurRadius: 12,
                                       offset: const Offset(0, 4),
                                     ),
@@ -534,13 +650,13 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
                                         side: BorderSide(
                                           color: AppConfig.primaryColor,
                                         ),
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 12,
-                                        ),
+                                        padding:
+                                            const EdgeInsets.symmetric(
+                                              vertical: 12,
+                                            ),
                                         shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(12),
                                         ),
                                       ),
                                       onPressed: _openAllIndicatorsDialog,
@@ -560,7 +676,6 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
                           ),
                   ),
                 ),
-                // Create diary button
                 Padding(
                   padding: const EdgeInsets.all(16),
                   child: SizedBox(
@@ -570,17 +685,24 @@ class _SelectIndicatorsPageState extends State<SelectIndicatorsPage> {
                         return InkWell(
                           onTap: _isLoading
                               ? null
-                              : () => _createDiary(blocContext),
+                              : () {
+                                  _dismissReadyHintIfVisible();
+                                  _createDiary(blocContext);
+                                },
                           borderRadius: BorderRadius.circular(14),
                           child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 16,
+                            ),
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
                                 colors: _isLoading
                                     ? [Colors.grey, Colors.grey.shade400]
                                     : [
                                         AppConfig.primaryColor,
-                                        AppConfig.primaryColor.withOpacity(0.8),
+                                        AppConfig.primaryColor.withValues(
+                                          alpha: 0.8,
+                                        ),
                                       ],
                                 begin: Alignment.topLeft,
                                 end: Alignment.bottomRight,
@@ -742,7 +864,7 @@ class _IndicatorsSelectionDialogState
   void _showMaxSelectionDialog() {
     showDialog(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.5),
+      barrierColor: Colors.black.withValues(alpha: 0.5),
       builder: (context) => Dialog(
         backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -901,7 +1023,9 @@ class _IndicatorsSelectionDialogState
                           ? Colors.grey.shade400
                           : (isSelected
                                 ? AppConfig.primaryColor
-                                : AppConfig.primaryColor.withOpacity(0.3)),
+                                : AppConfig.primaryColor.withValues(
+                                    alpha: 0.3,
+                                  )),
                       width: 1.5, // Увеличенная толщина границы
                     ),
                   ),
@@ -999,13 +1123,13 @@ class _IndicatorsSelectionDialogState
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(
-                      color: AppConfig.primaryColor.withOpacity(0.3),
+                      color: AppConfig.primaryColor.withValues(alpha: 0.3),
                     ),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(
-                      color: AppConfig.primaryColor.withOpacity(0.3),
+                      color: AppConfig.primaryColor.withValues(alpha: 0.3),
                     ),
                   ),
                   focusedBorder: OutlineInputBorder(
@@ -1034,7 +1158,7 @@ class _IndicatorsSelectionDialogState
                   gradient: LinearGradient(
                     colors: [
                       AppConfig.primaryColor,
-                      AppConfig.primaryColor.withOpacity(0.8),
+                      AppConfig.primaryColor.withValues(alpha: 0.8),
                     ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,

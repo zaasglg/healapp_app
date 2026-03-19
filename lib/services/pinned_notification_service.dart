@@ -1,7 +1,8 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
-import '../utils/app_logger.dart';
 import '../repositories/diary_repository.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 import 'notification_service.dart';
 
 /// Сервис для управления уведомлениями закрепленных параметров
@@ -20,6 +21,7 @@ class PinnedNotificationService {
     required int patientId,
     required List<PinnedParameter> pinnedParameters,
   }) async {
+    if (kIsWeb) return;
     try {
       // Инициализируем сервис уведомлений если нужно
       await _notificationService.initialize();
@@ -222,6 +224,7 @@ class PinnedNotificationService {
 
   /// Отмена всех уведомлений для закрепленных параметров пациента
   Future<void> cancelPinnedParameterNotifications(int patientId) async {
+    if (kIsWeb) return;
     try {
       // Отменяем уведомления с ID от 100000 до 199999 для этого пациента
       final baseId = patientId * 100000;
@@ -241,6 +244,7 @@ class PinnedNotificationService {
     int patientId,
     String parameterKey,
   ) async {
+    if (kIsWeb) return;
     try {
       // Отменяем все возможные уведомления для этого параметра
       for (int timeIndex = 0; timeIndex < 24; timeIndex++) {
@@ -295,6 +299,7 @@ class PinnedNotificationService {
     required int patientId,
     required PinnedParameter parameter,
   }) async {
+    if (kIsWeb) return;
     try {
       await _notificationService.initialize();
 
@@ -360,6 +365,7 @@ class PinnedNotificationService {
     required int patientId,
     required List<PinnedParameter> pinnedParameters,
   }) async {
+    if (kIsWeb) return;
     // Отменяем старые уведомления
     await cancelPinnedParameterNotifications(patientId);
 

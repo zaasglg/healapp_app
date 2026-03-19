@@ -18,20 +18,24 @@ import '../core/network/api_client.dart';
 import '../widgets/download_app_modal.dart';
 
 class DiariesPage extends StatelessWidget {
-  const DiariesPage({super.key});
+  const DiariesPage({super.key, this.showCreateDiaryHint = false});
   static const String routeName = '/diaries';
+
+  final bool showCreateDiaryHint;
 
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
       create: (context) => DiaryBloc()..add(const LoadDiaries()),
-      child: const _DiariesPageContent(),
+      child: _DiariesPageContent(showCreateDiaryHint: showCreateDiaryHint),
     );
   }
 }
 
 class _DiariesPageContent extends StatefulWidget {
-  const _DiariesPageContent();
+  const _DiariesPageContent({this.showCreateDiaryHint = false});
+
+  final bool showCreateDiaryHint;
 
   @override
   State<_DiariesPageContent> createState() => _DiariesPageContentState();
@@ -85,6 +89,7 @@ class _DiariesPageContentState extends State<_DiariesPageContent> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
+        centerTitle: false,
         automaticallyImplyLeading: false,
         title: Text(
           'Мои дневники',
@@ -110,12 +115,20 @@ class _DiariesPageContentState extends State<_DiariesPageContent> {
               ),
             ),
           ),
+          Text(
+            'Профиль',
+            style: GoogleFonts.firaSans(
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey.shade900,
+            ),
+          ),
+          const SizedBox(width: 16),
         ],
       ),
       body: SafeArea(
         child: Column(
           children: [
-            // Search field
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: TextField(
@@ -158,12 +171,9 @@ class _DiariesPageContentState extends State<_DiariesPageContent> {
                 },
               ),
             ),
-
-            // Content based on state
             Expanded(
               child: BlocBuilder<DiaryBloc, DiaryState>(
                 buildWhen: (previous, current) {
-                  // Перестраиваем только при изменении состояния
                   return previous.runtimeType != current.runtimeType ||
                       (previous is DiariesLoaded &&
                           current is DiariesLoaded &&
@@ -196,14 +206,11 @@ class _DiariesPageContentState extends State<_DiariesPageContent> {
                 },
               ),
             ),
-
-            // Create button
             BlocBuilder<AuthBloc, AuthState>(
               builder: (context, authState) {
                 bool canCreateDiary = true;
                 if (authState is AuthAuthenticated) {
                   final type = authState.user.accountType;
-                  // Скрываем для частной сиделки, врача и сиделки (от организации)
                   if (type == 'specialist' ||
                       type == 'doctor' ||
                       type == 'caregiver') {
@@ -512,7 +519,7 @@ class _DiariesPageContentState extends State<_DiariesPageContent> {
       );
     }
 
-    return Container(
+    return SizedBox(
       width: 44,
       height: 44,
       child: Center(

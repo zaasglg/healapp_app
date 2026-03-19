@@ -1,7 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../repositories/diary_repository.dart';
 import '../../core/network/api_exceptions.dart';
-import '../../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 import '../../services/pinned_notification_service.dart';
 import 'diary_event.dart';
 import 'diary_state.dart';
@@ -48,6 +48,14 @@ class DiaryBloc extends Bloc<DiaryEvent, DiaryState> {
       log.i(
         'Загружено ${diaries.length} дневников, показываем ${diariesWithPatients.length} (с пациентами)',
       );
+      for (var i = 0; i < diariesWithPatients.length; i++) {
+        final d = diariesWithPatients[i];
+        log.i(
+          '  📋 [${i + 1}] "${d.patientName}" (id=${d.id}, patientId=${d.patientId}, '
+          'возраст=${d.patientAge ?? "н/д"}, параметров=${d.pinnedParameters.length}, '
+          'записей=${d.entries.length})',
+        );
+      }
       emit(DiariesLoaded(diariesWithPatients));
     } on UnauthorizedException {
       emit(const DiaryError('Требуется авторизация'));
@@ -421,9 +429,37 @@ class DiaryBloc extends Bloc<DiaryEvent, DiaryState> {
         // Эмитим обновлённое состояние без перезагрузки
         emit(DiaryLoaded(updatedDiary));
         log.i('Замер добавлен локально: ${event.key} = ${event.value}');
+      } else if (currentState is DiariesLoaded) {
+        // Если загружен список дневников, обновляем нужный дневник в списке
+        final updatedDiaries = currentState.diaries.map((diary) {
+          if (diary.patientId == event.patientId) {
+            // Обновляем lastRecordedAt для закрепленного параметра
+            final updatedPinnedParameters = diary.pinnedParameters.map((param) {
+              if (param.key == event.key) {
+                return PinnedParameter(
+                  key: param.key,
+                  intervalMinutes: param.intervalMinutes,
+                  times: param.times,
+                  settings: param.settings,
+                  lastRecordedAt: event.recordedAt,
+                );
+              }
+              return param;
+            }).toList();
+
+            return diary.copyWith(
+              pinnedParameters: updatedPinnedParameters,
+              updatedAt: DateTime.now(),
+            );
+          }
+          return diary;
+        }).toList();
+
+        emit(DiariesLoaded(updatedDiaries));
+        log.i('Замер добавлен, список дневников обновлён: ${event.key}');
       } else {
-        // Если дневник не загружен, загружаем его
-        add(LoadDiaryByPatient(event.patientId));
+        // Если дневник не загружен, загружаем список
+        add(const LoadDiaries());
       }
     } catch (e) {
       log.e('Ошибка создания замера: $e');
@@ -433,6 +469,8 @@ class DiaryBloc extends Bloc<DiaryEvent, DiaryState> {
       // чтобы пользователь увидел сообщение об ошибке
       await Future.delayed(const Duration(seconds: 2));
       if (currentState is DiaryLoaded) {
+        emit(currentState);
+      } else if (currentState is DiariesLoaded) {
         emit(currentState);
       }
     }

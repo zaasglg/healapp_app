@@ -26,15 +26,11 @@ Future<MeasurementResult?> showMeasurementModal({
   final controller = TextEditingController();
   final controller2 = TextEditingController(); // Для давления
   final isBloodPressure = key == 'blood_pressure';
-
   return showDialog<MeasurementResult>(
     context: context,
     barrierColor: Colors.black.withOpacity(0.5),
-    builder: (ctx) => Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Padding(
+    builder: (ctx) {
+      final dialogContent = Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -71,7 +67,7 @@ Future<MeasurementResult?> showMeasurementModal({
                   Expanded(
                     child: TextField(
                       controller: controller,
-                      keyboardType: TextInputType.number,
+                      keyboardType: TextInputType.text,
                       decoration: InputDecoration(
                         labelText: 'Систолическое',
                         hintText: '120',
@@ -100,7 +96,7 @@ Future<MeasurementResult?> showMeasurementModal({
                   Expanded(
                     child: TextField(
                       controller: controller2,
-                      keyboardType: TextInputType.number,
+                      keyboardType: TextInputType.text,
                       decoration: InputDecoration(
                         labelText: 'Диастолическое',
                         hintText: '80',
@@ -120,7 +116,7 @@ Future<MeasurementResult?> showMeasurementModal({
             ] else ...[
               TextField(
                 controller: controller,
-                keyboardType: TextInputType.number,
+                keyboardType: TextInputType.text,
                 decoration: InputDecoration(
                   suffixText: unit,
                   suffixStyle: GoogleFonts.firaSans(
@@ -222,7 +218,16 @@ Future<MeasurementResult?> showMeasurementModal({
             ),
           ],
         ),
-      ),
-    ),
+      );
+
+      return Dialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+        ),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+        child: dialogContent,
+      );
+    },
   );
 }

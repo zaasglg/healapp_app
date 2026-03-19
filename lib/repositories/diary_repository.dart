@@ -1,463 +1,11 @@
 import '../core/network/api_client.dart';
 import '../core/network/api_exceptions.dart';
-import '../utils/app_logger.dart';
-import 'patient_repository.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
+import '../models/diary.dart';
+
+export '../models/diary.dart';
 
 final _defaultApiClient = apiClient;
-
-/// Модель для закреплённого параметра
-class PinnedParameter {
-  final String key;
-  final int intervalMinutes;
-  final List<String> times;
-  final Map<String, dynamic>? settings;
-  final DateTime? lastRecordedAt;
-
-  const PinnedParameter({
-    required this.key,
-    this.intervalMinutes = 60, // По умолчанию каждый час (минимум 1)
-    this.times = const [],
-    this.settings,
-    this.lastRecordedAt,
-  });
-
-  factory PinnedParameter.fromJson(Map<String, dynamic> json) {
-    final intervalMinutes = json['interval_minutes'] as int? ?? 60;
-    return PinnedParameter(
-      key: (json['key'] as String?) ?? '',
-      intervalMinutes: intervalMinutes < 1
-          ? 60
-          : intervalMinutes, // Минимум 1 минута
-      times:
-          (json['times'] as List<dynamic>?)
-              ?.map((e) => e.toString())
-              .toList() ??
-          const [],
-      settings: json['settings'] as Map<String, dynamic>?,
-      lastRecordedAt: json['last_recorded_at'] != null
-          ? DateTime.parse(json['last_recorded_at'] as String)
-          : null,
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'key': key,
-      'interval_minutes': intervalMinutes,
-      'times': times,
-      if (settings != null) 'settings': settings,
-      if (lastRecordedAt != null)
-        'last_recorded_at': lastRecordedAt!.toIso8601String(),
-    };
-  }
-
-  /// Получить читаемое название параметра
-  String get label {
-    switch (key) {
-      case 'blood_pressure':
-        return 'Давление';
-      case 'temperature':
-        return 'Температура';
-      case 'pulse':
-        return 'Пульс';
-      case 'blood_sugar':
-        return 'Сахар крови';
-      case 'weight':
-        return 'Вес';
-      case 'oxygen_saturation':
-        return 'Сатурация';
-      case 'walk':
-        return 'Прогулка';
-      case 'cognitive_games':
-        return 'Когнитивные игры';
-      case 'diaper_change':
-        return 'Смена подгузника';
-      case 'hygiene':
-        return 'Гигиена';
-      case 'skin_moisturizing':
-        return 'Увлажнение кожи';
-      case 'meal':
-        return 'Прием пищи';
-      case 'medication':
-        return 'Лекарства';
-      case 'vitamins':
-        return 'Витамины';
-      case 'sleep':
-        return 'Сон';
-      case 'respiratory_rate':
-        return 'Частота дыхания';
-      case 'pain_level':
-        return 'Уровень боли';
-      case 'urine':
-        return 'Мочеиспускание';
-      case 'defecation':
-        return 'Дефекация';
-      case 'urine_output':
-        return 'Диурез';
-      case 'fluid_intake':
-        return 'Потребление жидкости';
-      default:
-        return key;
-    }
-  }
-
-  /// Получить интервал в читаемом формате
-  String get intervalLabel {
-    if (intervalMinutes <= 0) {
-      return 'не установлен';
-    } else if (intervalMinutes < 60) {
-      return 'каждые $intervalMinutes мин';
-    } else if (intervalMinutes == 60) {
-      return 'каждый час';
-    } else if (intervalMinutes < 1440) {
-      final hours = intervalMinutes ~/ 60;
-      return 'каждые $hours ч';
-    } else {
-      final days = intervalMinutes ~/ 1440;
-      return 'каждые $days дн';
-    }
-  }
-
-  /// Получить статус показателя (ожидает/просрочено)
-  PinnedParameterStatus get status {
-    if (lastRecordedAt == null) {
-      return PinnedParameterStatus.overdue;
-    }
-
-    final nextMeasurementTime = lastRecordedAt!.add(
-      Duration(minutes: intervalMinutes),
-    );
-    final difference = nextMeasurementTime.difference(DateTime.now());
-
-    if (difference.isNegative) {
-      return PinnedParameterStatus.overdue;
-    } else {
-      return PinnedParameterStatus.pending;
-    }
-  }
-
-  /// Получить время до следующего измерения
-  Duration? get timeUntilNext {
-    if (lastRecordedAt == null) {
-      return null;
-    }
-
-    final nextMeasurementTime = lastRecordedAt!.add(
-      Duration(minutes: intervalMinutes),
-    );
-    final difference = nextMeasurementTime.difference(DateTime.now());
-
-    return difference.isNegative ? null : difference;
-  }
-
-  /// Получить время просрочки
-  Duration? get overdueTime {
-    if (lastRecordedAt == null) {
-      return null;
-    }
-
-    final nextMeasurementTime = lastRecordedAt!.add(
-      Duration(minutes: intervalMinutes),
-    );
-    final difference = DateTime.now().difference(nextMeasurementTime);
-
-    return difference.isNegative ? null : difference;
-  }
-
-  /// Получить текст для отображения таймера
-  String get timerText {
-    if (lastRecordedAt == null) {
-      return 'Требуется замер';
-    }
-
-    final time = timeUntilNext;
-    if (time == null) {
-      final overdue = overdueTime;
-      if (overdue == null) return 'Просрочено';
-
-      final hours = overdue.inHours;
-      final minutes = overdue.inMinutes % 60;
-
-      if (hours > 0) {
-        return 'Просрочено на $hours ч $minutes мин';
-      } else {
-        return 'Просрочено на $minutes мин';
-      }
-    }
-
-    final hours = time.inHours;
-    final minutes = time.inMinutes % 60;
-
-    if (hours > 0) {
-      return 'Через $hours ч $minutes мин';
-    } else {
-      return 'Через $minutes мин';
-    }
-  }
-
-  /// Получить последнее значение показателя из записей дневника
-  String? getLastValue(List<DiaryEntry> entries) {
-    // Фильтруем записи по ключу параметра
-    final relevantEntries = entries
-        .where((entry) => entry.parameterKey == key)
-        .toList();
-
-    if (relevantEntries.isEmpty) {
-      return null;
-    }
-
-    // Сортируем по времени записи (последняя запись первой)
-    relevantEntries.sort((a, b) => b.recordedAt.compareTo(a.recordedAt));
-
-    return relevantEntries.first.value;
-  }
-
-  /// Форматировать значение для отображения в кружке
-  String formatValueForDisplay(String? value) {
-    if (value == null) return '—';
-
-    try {
-      // Для давления (blood_pressure)
-      if (key == 'blood_pressure') {
-        // Значение может быть в формате "120/80"
-        if (value.contains('/')) {
-          return value; // Уже в нужном формате
-        }
-        // Иначе возвращаем как есть
-        return value;
-      }
-
-      // Для температуры (temperature)
-      if (key == 'temperature') {
-        try {
-          final temp = double.parse(value);
-          return temp.toStringAsFixed(1);
-        } catch (e) {
-          return value;
-        }
-      }
-
-      // Для пульса (pulse)
-      if (key == 'pulse') {
-        try {
-          final pulse = int.parse(value);
-          return pulse.toString();
-        } catch (e) {
-          return value;
-        }
-      }
-
-      // Для сахара крови (blood_sugar)
-      if (key == 'blood_sugar') {
-        try {
-          final sugar = double.parse(value);
-          return sugar.toStringAsFixed(1);
-        } catch (e) {
-          return value;
-        }
-      }
-
-      // Для веса (weight)
-      if (key == 'weight') {
-        try {
-          final weight = double.parse(value);
-          return weight.toStringAsFixed(1);
-        } catch (e) {
-          return value;
-        }
-      }
-
-      // Для сатурации (oxygen_saturation)
-      if (key == 'oxygen_saturation') {
-        try {
-          final saturation = int.parse(value);
-          return '$saturation%';
-        } catch (e) {
-          return value;
-        }
-      }
-
-      // По умолчанию возвращаем как есть
-      return value;
-    } catch (e) {
-      return '—';
-    }
-  }
-
-  @override
-  String toString() =>
-      'PinnedParameter(key: $key, interval: $intervalMinutes min, lastRecorded: $lastRecordedAt)';
-}
-
-enum PinnedParameterStatus {
-  pending, // Ожидает (время еще не пришло)
-  overdue, // Просрочено (время вышло)
-}
-
-/// Модель записи дневника
-class DiaryEntry {
-  final int id;
-  final int diaryId;
-  final String parameterKey;
-  final dynamic value; // Changed from String to dynamic
-  final String? notes;
-  final DateTime recordedAt;
-  final DateTime createdAt;
-  final DateTime updatedAt;
-
-  const DiaryEntry({
-    required this.id,
-    required this.diaryId,
-    required this.parameterKey,
-    required this.value,
-    this.notes,
-    required this.recordedAt,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-
-  factory DiaryEntry.fromJson(Map<String, dynamic> json) {
-    return DiaryEntry(
-      id: json['id'] as int,
-      diaryId: json['diary_id'] as int,
-      parameterKey: (json['parameter_key'] ?? json['key'] ?? '').toString(),
-      value: json['value'], // Keep original type
-      notes: json['notes'] as String?,
-      recordedAt: DateTime.parse(json['recorded_at'] as String),
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'diary_id': diaryId,
-      'parameter_key': parameterKey,
-      'value': value,
-      'notes': notes,
-      'recorded_at': recordedAt.toIso8601String(),
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
-    };
-  }
-
-  @override
-  String toString() => 'DiaryEntry(id: $id, key: $parameterKey, value: $value)';
-}
-
-/// Модель дневника пациента
-class Diary {
-  final int id;
-  final int patientId;
-  final Patient? patient;
-  final List<PinnedParameter> pinnedParameters;
-  final Map<String, dynamic>? settings;
-  final List<DiaryEntry> entries;
-  final DateTime createdAt;
-  final DateTime updatedAt;
-
-  const Diary({
-    required this.id,
-    required this.patientId,
-    this.patient,
-    required this.pinnedParameters,
-    this.settings,
-    required this.entries,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-
-  /// Получить имя пациента (удобное свойство)
-  String get patientName => patient?.fullName ?? 'Пациент #$patientId';
-
-  /// Получить возраст пациента (удобное свойство)
-  int? get patientAge => patient?.age;
-
-  factory Diary.fromJson(Map<String, dynamic> json) {
-    // Парсим вложенный объект patient
-    Patient? patient;
-    final patientJson = json['patient'];
-    if (patientJson is Map<String, dynamic>) {
-      patient = Patient.fromJson(patientJson);
-    }
-
-    return Diary(
-      id: json['id'] as int,
-      patientId: json['patient_id'] as int,
-      patient: patient,
-      pinnedParameters:
-          (json['pinned_parameters'] as List<dynamic>?)
-              ?.map((e) => PinnedParameter.fromJson(e as Map<String, dynamic>))
-              .toList() ??
-          [],
-      settings: json['settings'] as Map<String, dynamic>?,
-      entries:
-          (json['entries'] as List<dynamic>?)
-              ?.map((e) => DiaryEntry.fromJson(e as Map<String, dynamic>))
-              .toList() ??
-          [],
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'patient_id': patientId,
-      'patient': patient?.toJson(),
-      'pinned_parameters': pinnedParameters.map((e) => e.toJson()).toList(),
-      'settings': settings,
-      'entries': entries.map((e) => e.toJson()).toList(),
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
-    };
-  }
-
-  /// Создаёт копию дневника с изменёнными полями
-  Diary copyWith({
-    int? id,
-    int? patientId,
-    Patient? patient,
-    List<PinnedParameter>? pinnedParameters,
-    Map<String, dynamic>? settings,
-    List<DiaryEntry>? entries,
-    DateTime? createdAt,
-    DateTime? updatedAt,
-  }) {
-    return Diary(
-      id: id ?? this.id,
-      patientId: patientId ?? this.patientId,
-      patient: patient ?? this.patient,
-      pinnedParameters: pinnedParameters ?? this.pinnedParameters,
-      settings: settings ?? this.settings,
-      entries: entries ?? this.entries,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-    );
-  }
-
-  @override
-  String toString() =>
-      'Diary(id: $id, patientId: $patientId, entries: ${entries.length})';
-}
-
-/// Результат создания дневника (может вернуть конфликт)
-sealed class CreateDiaryResult {}
-
-/// Дневник успешно создан
-class DiaryCreated extends CreateDiaryResult {
-  final Diary diary;
-  DiaryCreated(this.diary);
-}
-
-/// Дневник уже существует (409 Conflict)
-class DiaryAlreadyExists extends CreateDiaryResult {
-  final String message;
-  final int existingDiaryId;
-  DiaryAlreadyExists(this.message, this.existingDiaryId);
-}
 
 /// Репозиторий для работы с дневниками
 class DiaryRepository {
@@ -532,9 +80,24 @@ class DiaryRepository {
       log.d('DiaryRepository: Тип данных: ${data.runtimeType}');
       if (data is List) {
         log.d('DiaryRepository: Количество дневников: ${data.length}');
-        return data
+        for (var i = 0; i < data.length; i++) {
+          final raw = data[i] as Map<String, dynamic>;
+          final rawPatient = raw['patient'];
+          log.d('DiaryRepository: Дневник[${i + 1}] raw patient JSON: $rawPatient');
+        }
+        final diaries = data
             .map((e) => Diary.fromJson(e as Map<String, dynamic>))
             .toList();
+        for (var i = 0; i < diaries.length; i++) {
+          final d = diaries[i];
+          log.d(
+            'DiaryRepository: Дневник[${i + 1}]: id=${d.id}, patientId=${d.patientId}, '
+            'patient=${d.patientName}, age=${d.patientAge}, '
+            'pinnedParams=${d.pinnedParameters.length}, entries=${d.entries.length}, '
+            'created=${d.createdAt}',
+          );
+        }
+        return diaries;
       }
       log.w('DiaryRepository: Данные не являются списком: $data');
       return [];
@@ -560,6 +123,26 @@ class DiaryRepository {
       rethrow;
     } catch (e) {
       throw ServerException('Ошибка при получении дневника: ${e.toString()}');
+    }
+  }
+
+  /// Получить клиента-владельца дневника
+  Future<List<DiaryClient>> getDiaryClients(int diaryId) async {
+    try {
+      final response = await _apiClient.get('/diary/$diaryId/clients');
+      final data = response.data;
+      if (data is List) {
+        return data
+            .map((e) => DiaryClient.fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+      return [];
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      throw ServerException(
+        'Ошибка при получении владельца дневника: ${e.toString()}',
+      );
     }
   }
 
@@ -837,19 +420,7 @@ class DiaryRepository {
         return DiaryEntry.fromJson(data);
       }
 
-      // Если сервер не возвращает данные, создаём временную запись
-      // с временным ID для локального обновления UI
-      final now = DateTime.now();
-      return DiaryEntry(
-        id: now.millisecondsSinceEpoch, // временный ID
-        diaryId: 0, // будет обновлён при следующей загрузке
-        parameterKey: key,
-        value: value,
-        notes: notes,
-        recordedAt: recordedAt,
-        createdAt: now,
-        updatedAt: now,
-      );
+      throw const ServerException('Сервер не вернул данные созданной записи');
     } on ApiException {
       rethrow;
     } catch (e) {

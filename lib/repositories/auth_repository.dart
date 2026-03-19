@@ -2,176 +2,12 @@ import 'dart:convert';
 import 'dart:io';
 import '../core/network/api_client.dart';
 import '../core/network/api_exceptions.dart';
-import '../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
+import '../models/user.dart';
 
-// Импортируем глобальный экземпляр
+export '../models/user.dart';
+
 final _defaultApiClient = apiClient;
-
-/// Модель пользователя
-class User {
-  final String id;
-  final String? firstName;
-  final String? lastName;
-  final String? middleName;
-  final String? email;
-  final String phone;
-  final String? accountType;
-  final List<String>? roles;
-  final Map<String, dynamic>? organization;
-  final Map<String, dynamic>? additionalData;
-  final String? avatar;
-
-  User({
-    required this.id,
-    this.firstName,
-    this.lastName,
-    this.middleName,
-    this.email,
-    required this.phone,
-    this.accountType,
-    this.roles,
-    this.organization,
-    this.additionalData,
-    this.avatar,
-  });
-
-  /// Полное имя пользователя
-  String? get fullName {
-    final parts = <String>[];
-    if (firstName != null && firstName!.isNotEmpty) parts.add(firstName!);
-    if (lastName != null && lastName!.isNotEmpty) parts.add(lastName!);
-    if (middleName != null && middleName!.isNotEmpty) parts.add(middleName!);
-    return parts.isNotEmpty ? parts.join(' ') : null;
-  }
-
-  /// Для обратной совместимости
-  String? get name => fullName;
-
-  /// Получить имя для отображения (организация или имя сиделки)
-  String get displayName {
-    // Для частной сиделки, клиента, врача или сотрудника организации показываем имя и фамилию
-    if (accountType == 'specialist' ||
-        accountType == 'client' ||
-        accountType == 'doctor' ||
-        accountType == 'caregiver') {
-      final fName = firstName?.trim() ?? '';
-      final lName = lastName?.trim() ?? '';
-
-      if (fName.isNotEmpty || lName.isNotEmpty) {
-        return '$fName $lName'.trim();
-      }
-
-      // Пробуем поле name из additionalData
-      if (additionalData != null) {
-        final name = (additionalData!['name'] as String?)?.trim();
-        if (name != null && name.isNotEmpty) {
-          return name;
-        }
-      }
-
-      // Если имя не заполнено, показываем телефон
-      return phone;
-    }
-
-    // Для пансионата с именем и фамилией показываем персональные данные
-    if (accountType == 'pansionat') {
-      final fName = firstName?.trim() ?? '';
-      final lName = lastName?.trim() ?? '';
-
-      if (fName.isNotEmpty || lName.isNotEmpty) {
-        return '$fName $lName'.trim();
-      }
-    }
-
-    // Для организаций показываем название организации
-    if (organization != null) {
-      final name = (organization!['name'] as String?)?.trim();
-      if (name != null && name.isNotEmpty) return name;
-    }
-
-    // Fallback
-    return fullName ?? phone;
-  }
-
-  /// Получить отображаемый контакт
-  String get displayContact {
-    if (email != null && email!.trim().isNotEmpty) return email!.trim();
-    if (phone.isNotEmpty) return phone;
-    return '';
-  }
-
-  factory User.fromJson(Map<String, dynamic> json) {
-    // Извлекаем роли из разных возможных мест в ответе
-    List<String>? roles;
-
-    // API может возвращать 'roles' (массив) или 'role' (строка)
-    final rolesData = json['roles'];
-    final roleData = json['role'];
-
-    // Логируем для отладки
-    log.d(
-      'User.fromJson: accountType=${json['account_type']}, roles=$rolesData, role=$roleData',
-    );
-
-    if (rolesData is List) {
-      // Массив ролей (для сотрудников организации)
-      roles = rolesData.map((r) {
-        if (r is Map) {
-          return r['name']?.toString() ?? '';
-        }
-        return r.toString();
-      }).toList();
-    } else if (roleData is String && roleData.isNotEmpty) {
-      // Одна роль в виде строки (для клиентов)
-      roles = [roleData];
-    }
-
-    // Извлекаем организацию
-    Map<String, dynamic>? organization;
-    if (json['organization'] is Map<String, dynamic>) {
-      organization = json['organization'] as Map<String, dynamic>;
-    }
-
-    return User(
-      id: json['id']?.toString() ?? '',
-      firstName: json['first_name'] as String?,
-      lastName: json['last_name'] as String?,
-      middleName: json['middle_name'] as String?,
-      email: json['email'] as String?,
-      phone: json['phone']?.toString() ?? '',
-      accountType: json['account_type'] as String?,
-      roles: roles,
-      organization: organization,
-      additionalData: json,
-      avatar: json['avatar'] as String?,
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'first_name': firstName,
-      'last_name': lastName,
-      'middle_name': middleName,
-      'email': email,
-      'phone': phone,
-      'account_type': accountType,
-      'roles': roles,
-      'organization': organization,
-      ...?additionalData,
-    };
-  }
-
-  /// Проверить, есть ли у пользователя определённая роль
-  bool hasRole(String role) {
-    return roles?.contains(role) ?? false;
-  }
-
-  @override
-  String toString() {
-    return 'User(id: $id, phone: $phone, name: $fullName, accountType: $accountType, roles: $roles)';
-  }
-}
 
 /// Репозиторий для работы с авторизацией
 class AuthRepository {
@@ -248,6 +84,7 @@ class AuthRepository {
   ///   - last_name: фамилия
   ///   - account_type: тип аккаунта (pansionat, agency, specialist)
   ///   - referral_code (опционально): реферальный код
+  ///   - is_agree: согласие с правилами (1 или 0)
   ///
   /// Возвращает Map с данными ответа (message, phone)
   /// Выбрасывает [ApiException] при ошибке
@@ -271,6 +108,18 @@ class AuthRepository {
     } catch (e) {
       throw ServerException('Ошибка при регистрации: ${e.toString()}');
     }
+  }
+
+  /// Извлечь данные пользователя из ответа сервера.
+  /// API может вернуть либо {'user': {...}}, либо напрямую объект пользователя.
+  Map<String, dynamic>? _extractUserData(Map<String, dynamic> data) {
+    if (data.containsKey('user') && data['user'] is Map<String, dynamic>) {
+      return data['user'] as Map<String, dynamic>;
+    }
+    if (data.containsKey('id')) {
+      return data;
+    }
+    return null;
   }
 
   /// Выход из системы
@@ -353,15 +202,7 @@ class AuthRepository {
 
       final data = response.data as Map<String, dynamic>;
 
-      // Проверяем формат ответа - может быть {'user': {...}} или напрямую данные пользователя
-      Map<String, dynamic>? userData;
-      if (data.containsKey('user') && data['user'] is Map<String, dynamic>) {
-        userData = data['user'] as Map<String, dynamic>;
-      } else if (data.containsKey('id')) {
-        // Данные пользователя возвращаются напрямую
-        userData = data;
-      }
-
+      final userData = _extractUserData(data);
       if (userData == null) {
         throw const ServerException('Данные пользователя не получены');
       }
@@ -404,15 +245,7 @@ class AuthRepository {
 
       final data = response.data as Map<String, dynamic>;
 
-      // Проверяем формат ответа - может быть {'user': {...}} или напрямую данные пользователя
-      Map<String, dynamic>? userData;
-      if (data.containsKey('user') && data['user'] is Map<String, dynamic>) {
-        userData = data['user'] as Map<String, dynamic>;
-      } else if (data.containsKey('id')) {
-        // Данные пользователя возвращаются напрямую
-        userData = data;
-      }
-
+      final userData = _extractUserData(data);
       if (userData == null) {
         throw const ServerException('Данные пользователя не получены');
       }
@@ -458,16 +291,7 @@ class AuthRepository {
 
       final responseData = response.data as Map<String, dynamic>;
 
-      // Проверяем формат ответа - может быть {'user': {...}} или напрямую данные пользователя
-      Map<String, dynamic>? userData;
-      if (responseData.containsKey('user') &&
-          responseData['user'] is Map<String, dynamic>) {
-        userData = responseData['user'] as Map<String, dynamic>;
-      } else if (responseData.containsKey('id')) {
-        // Данные пользователя возвращаются напрямую
-        userData = responseData;
-      }
-
+      final userData = _extractUserData(responseData);
       if (userData == null) {
         throw const ServerException('Данные пользователя не получены');
       }

@@ -5,8 +5,11 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:toastification/toastification.dart';
 import '../config/app_config.dart';
+import '../config/hint_ids.dart';
 import '../utils/app_icons.dart';
 import '../utils/performance_utils.dart';
+import '../bloc/hint/hint_bloc.dart';
+import '../bloc/hint/hint_event.dart';
 import '../bloc/patient/patient_bloc.dart';
 import '../bloc/patient/patient_event.dart';
 import '../bloc/patient/patient_state.dart';
@@ -27,14 +30,54 @@ class WardsPage extends StatelessWidget {
   }
 }
 
-class _WardsPageContent extends StatelessWidget {
+class _WardsPageContent extends StatefulWidget {
   const _WardsPageContent();
 
+  @override
+  State<_WardsPageContent> createState() => _WardsPageContentState();
+}
+
+class _WardsPageContentState extends State<_WardsPageContent> {
+  Patient? _createdPatientForDiaryHint;
+
+  @override
+  void initState() {
+    super.initState();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      context.read<HintBloc>().add(
+        const HintShowRequested(HintIds.wardsAddCard),
+      );
+    });
+  }
+
   Future<void> _createNewCard(BuildContext context) async {
+    _dismissHintIfVisible();
+
     final result = await context.push('/new-ward-card');
-    // Если пациент был создан (result == true), обновляем список
-    if (result == true && context.mounted) {
+    if (result is Patient && context.mounted) {
+      setState(() {
+        _createdPatientForDiaryHint = result;
+      });
       context.read<PatientBloc>().add(const RefreshPatients());
+    }
+  }
+
+  void _clearCreatedDiaryHint() {
+    _createdPatientForDiaryHint = null;
+  }
+
+  void _openDiaryCreation() {
+    _clearCreatedDiaryHint();
+    context.go('/diaries?showCreateDiaryHint=1');
+  }
+
+  void _dismissHintIfVisible() {
+    if (context.read<HintBloc>().state.isHintVisible(HintIds.wardsAddCard)) {
+      context.read<HintBloc>().add(
+        const HintDismissRequested(HintIds.wardsAddCard),
+      );
     }
   }
 
@@ -66,109 +109,167 @@ class _WardsPageContent extends StatelessWidget {
           );
         }
       },
-      child: Scaffold(
-        backgroundColor: const Color(0xFFF7F7F8),
-        appBar: AppBar(
-          backgroundColor: Colors.white,
-          elevation: 0,
-          leading: IconButton(
-            icon: Image.asset(
-              AppIcons.back,
-              width: 24,
-              height: 24,
-              fit: BoxFit.contain,
-            ),
-            onPressed: () => context.pop(),
-          ),
-          title: Text(
-            'Карточки подопечных',
-            style: GoogleFonts.firaSans(
-              color: Colors.grey.shade900,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          centerTitle: true,
-        ),
-        body: SafeArea(
-          child: Column(
-            children: [
-              Expanded(
-                child: BlocBuilder<PatientBloc, PatientState>(
-                  buildWhen: (previous, current) {
-                    // Перестраиваем только при изменении состояния
-                    return previous.runtimeType != current.runtimeType ||
-                        (previous is PatientLoaded &&
-                            current is PatientLoaded &&
-                            previous.patients.length !=
-                                current.patients.length);
-                  },
-                  builder: (context, state) {
-                    return RefreshIndicator(
-                      onRefresh: () async {
-                        context.read<PatientBloc>().add(
-                          const RefreshPatients(),
-                        );
-                        await Future.delayed(const Duration(milliseconds: 500));
-                      },
-                      color: AppConfig.primaryColor,
-                      child: _buildContent(context, state),
-                    );
-                  },
+      child: Stack(
+        children: [
+          Scaffold(
+            backgroundColor: const Color(0xFFF7F7F8),
+            appBar: AppBar(
+              backgroundColor: Colors.white,
+              elevation: 0,
+              leading: IconButton(
+                icon: Image.asset(
+                  AppIcons.back,
+                  width: 24,
+                  height: 24,
+                  fit: BoxFit.contain,
+                ),
+                onPressed: () => context.pop(),
+              ),
+              title: Text(
+                'Карточки подопечных',
+                style: GoogleFonts.firaSans(
+                  color: Colors.grey.shade900,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              // Bottom button
-              BlocBuilder<AuthBloc, AuthState>(
-                builder: (context, authState) {
-                  bool canCreateCard = true;
-                  if (authState is AuthAuthenticated) {
-                    // 'specialist' corresponds to "Частная сиделка"
-                    // 'employee' corresponds to "Сотрудник"
-                    if (authState.user.accountType == 'doctor' ||
-                        authState.user.accountType == 'caregiver') {
-                      canCreateCard = false;
-                    }
-                  }
+              centerTitle: true,
+            ),
+            body: SafeArea(
+              child: Column(
+                children: [
+                  Expanded(
+                    child: BlocBuilder<PatientBloc, PatientState>(
+                      buildWhen: (previous, current) {
+                        return previous.runtimeType != current.runtimeType ||
+                            (previous is PatientLoaded &&
+                                current is PatientLoaded &&
+                                previous.patients.length !=
+                                    current.patients.length);
+                      },
+                      builder: (context, state) {
+                        return RefreshIndicator(
+                          onRefresh: () async {
+                            context.read<PatientBloc>().add(
+                              const RefreshPatients(),
+                            );
+                            await Future.delayed(
+                              const Duration(milliseconds: 500),
+                            );
+                          },
+                          color: AppConfig.primaryColor,
+                          child: _buildContent(context, state),
+                        );
+                      },
+                    ),
+                  ),
+                  BlocBuilder<AuthBloc, AuthState>(
+                    builder: (context, authState) {
+                      bool canCreateCard = true;
+                      if (authState is AuthAuthenticated) {
+                        if (authState.user.accountType == 'doctor' ||
+                            authState.user.accountType == 'caregiver') {
+                          canCreateCard = false;
+                        }
+                      }
 
-                  if (!canCreateCard) return const SizedBox.shrink();
+                      if (!canCreateCard) {
+                        return const SizedBox.shrink();
+                      }
 
-                  return Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: InkWell(
-                        onTap: () => _createNewCard(context),
-                        borderRadius: BorderRadius.circular(14),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                AppConfig.primaryColor,
-                                AppConfig.primaryColor.withOpacity(0.8),
-                              ],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
+                      if (_createdPatientForDiaryHint != null) {
+                        return Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: InkWell(
+                              onTap: () => _createNewCard(context),
+                              borderRadius: BorderRadius.circular(14),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                ),
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      AppConfig.primaryColor,
+                                      AppConfig.primaryColor.withValues(
+                                        alpha: 0.8,
+                                      ),
+                                    ],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                  borderRadius: BorderRadius.circular(50),
+                                ),
+                                child: Text(
+                                  '+ Добавить карточку',
+                                  textAlign: TextAlign.center,
+                                  style: GoogleFonts.firaSans(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
                             ),
-                            borderRadius: BorderRadius.circular(50),
                           ),
-                          child: Text(
-                            '+ Добавить карточку',
-                            textAlign: TextAlign.center,
-                            style: GoogleFonts.firaSans(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
+                        );
+                      }
+
+                      return Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: InkWell(
+                            onTap: () => _createNewCard(context),
+                            borderRadius: BorderRadius.circular(14),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 16,
+                              ),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    AppConfig.primaryColor,
+                                    AppConfig.primaryColor.withValues(
+                                      alpha: 0.8,
+                                    ),
+                                  ],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                                borderRadius: BorderRadius.circular(50),
+                              ),
+                              child: Text(
+                                '+ Добавить карточку',
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.firaSans(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ),
-                  );
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_createdPatientForDiaryHint != null)
+            Positioned.fill(
+              child: _CreatedCardDiaryOverlay(
+                onCreateDiary: () {
+                  final patient = _createdPatientForDiaryHint;
+                  if (patient == null) return;
+                  _openDiaryCreation();
                 },
               ),
-            ],
-          ),
-        ),
+            ),
+        ],
       ),
     );
   }
@@ -275,6 +376,198 @@ class _WardsPageContent extends StatelessWidget {
   }
 }
 
+class _WardsAddCardHintTooltip extends StatelessWidget {
+  const _WardsAddCardHintTooltip();
+
+  @override
+  Widget build(BuildContext context) {
+    const step = 1;
+    const totalSteps = 3;
+
+    final tooltipWidth = (MediaQuery.sizeOf(context).width - 32).clamp(
+      280.0,
+      430.0,
+    );
+
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+      child: SizedBox(
+        width: tooltipWidth,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [Color(0xFF65ADB8), Color(0xFF1C7D90)],
+            ),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Ваш прогресс\nв освоении сервиса',
+                style: GoogleFonts.firaSans(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFFD6E0E2),
+                  height: 1.15,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Text(
+                    'Шаг $step из $totalSteps',
+                    style: GoogleFonts.firaSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w400,
+                      color: const Color(0xFFD6E0E2),
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 30),
+              Text(
+                'Нажмите ниже, чтобы добавить\n'
+                'близкого и начать наблюдение',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.firaSans(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFFD6E0E2),
+                  height: 1.2,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CreatedCardDiaryHintTooltip extends StatelessWidget {
+  const _CreatedCardDiaryHintTooltip({required this.onCreateDiary});
+
+  final VoidCallback onCreateDiary;
+
+  @override
+  Widget build(BuildContext context) {
+    final tooltipWidth = (MediaQuery.sizeOf(context).width - 32).clamp(
+      280.0,
+      430.0,
+    );
+
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+      child: SizedBox(
+        width: tooltipWidth,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [Color(0xFF65ADB8), Color(0xFF1C7D90)],
+            ),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Ваш прогресс\nв освоении сервиса',
+                style: GoogleFonts.firaSans(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFFD6E0E2),
+                  height: 1.15,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Шаг 2 из 3',
+                style: GoogleFonts.firaSans(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                  color: const Color(0xFFD6E0E2),
+                  decoration: TextDecoration.none,
+                ),
+              ),
+              const SizedBox(height: 28),
+              Text(
+                'Карточка создана.\nТеперь создайте дневник\n'
+                'здоровья, чтобы\nотслеживать состояние',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.firaSans(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFFD6E0E2),
+                  height: 1.18,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+              const SizedBox(height: 22),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: const Color(0xFF1C7D90),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    elevation: 0,
+                  ),
+                  onPressed: onCreateDiary,
+                  child: Text(
+                    'Создать дневник',
+                    style: GoogleFonts.firaSans(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CreatedCardDiaryOverlay extends StatelessWidget {
+  const _CreatedCardDiaryOverlay({required this.onCreateDiary});
+
+  final VoidCallback onCreateDiary;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Colors.black.withValues(alpha: 0.58),
+      child: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: _CreatedCardDiaryHintTooltip(onCreateDiary: onCreateDiary),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PatientCard extends StatelessWidget {
   final Patient patient;
 
@@ -290,7 +583,7 @@ class _PatientCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.06),
+              color: Colors.black.withValues(alpha: 0.06),
               blurRadius: 12,
               offset: const Offset(0, 4),
             ),
@@ -352,30 +645,6 @@ class _PatientCard extends StatelessWidget {
       ),
     );
   }
-
-  String _getInitials(Patient patient) {
-    final parts = <String>[];
-    if (patient.firstName != null && patient.firstName!.isNotEmpty) {
-      parts.add(patient.firstName![0].toUpperCase());
-    }
-    if (patient.lastName != null && patient.lastName!.isNotEmpty) {
-      parts.add(patient.lastName![0].toUpperCase());
-    }
-    return parts.isNotEmpty ? parts.join() : '?';
-  }
-
-  Color _getMobilityColor(String? mobility) {
-    switch (mobility) {
-      case 'walking':
-        return Colors.green.shade600;
-      case 'wheelchair':
-        return Colors.orange.shade600;
-      case 'bedridden':
-        return Colors.red.shade600;
-      default:
-        return Colors.grey.shade600;
-    }
-  }
 }
 
 class _ShimmerPatientCard extends StatelessWidget {
@@ -391,7 +660,7 @@ class _ShimmerPatientCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.06),
+              color: Colors.black.withValues(alpha: 0.06),
               blurRadius: 12,
               offset: const Offset(0, 4),
             ),

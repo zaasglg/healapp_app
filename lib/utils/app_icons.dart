@@ -8,6 +8,11 @@ class AppIcons {
   static const String logo = 'assets/icons/common/logo.png';
   static const String profile = 'assets/icons/common/user.svg';
   static const String settings = 'assets/icons/common/settings.png';
+  static const String heart = 'assets/icons/common/heart.png';
+  static const String doctor = 'assets/icons/common/doctor.png';
+  static const String cart = 'assets/icons/common/cart.png';
+  static const String calendar = 'assets/icons/common/calendar.png';
+  static const String diary = 'assets/icons/common/diary.png';
 
   // Auth icons
   static const String login = 'assets/icons/auth/login.png';

@@ -2,7 +2,7 @@ import 'package:equatable/equatable.dart';
 
 import '../core/network/api_client.dart';
 import '../core/network/api_exceptions.dart';
-import '../utils/app_logger.dart';
+import 'package:healapp_mobile/core/logging/app_logger.dart';
 
 final _defaultApiClient = apiClient;
 
@@ -76,6 +76,7 @@ class RouteSheetTask extends Equatable {
   final int? rescheduledBy;
   final DateTime? rescheduledAt;
   final String? relatedDiaryKey;
+  final String? type;
   final bool isRescheduled;
   final bool isOverdue;
 
@@ -99,6 +100,7 @@ class RouteSheetTask extends Equatable {
     this.rescheduledBy,
     this.rescheduledAt,
     this.relatedDiaryKey,
+    this.type,
     required this.isRescheduled,
     required this.isOverdue,
   });
@@ -157,6 +159,7 @@ class RouteSheetTask extends Equatable {
           ? DateTime.parse(json['rescheduled_at'] as String)
           : null,
       relatedDiaryKey: json['related_diary_key'] as String?,
+      type: json['type'] as String?,
       // Для завершенных задач сбрасываем флаги
       isRescheduled: shouldResetFlags ? false : isRescheduledFromApi,
       isOverdue: shouldResetFlags ? false : isOverdueFromApi,
@@ -184,6 +187,7 @@ class RouteSheetTask extends Equatable {
       'rescheduled_by': rescheduledBy,
       'rescheduled_at': rescheduledAt?.toIso8601String(),
       'related_diary_key': relatedDiaryKey,
+      'type': type,
       'is_rescheduled': isRescheduled,
       'is_overdue': isOverdue,
     };
@@ -222,6 +226,7 @@ class RouteSheetTask extends Equatable {
     int? rescheduledBy,
     DateTime? rescheduledAt,
     String? relatedDiaryKey,
+    String? type,
     bool? isRescheduled,
     bool? isOverdue,
   }) {
@@ -245,6 +250,7 @@ class RouteSheetTask extends Equatable {
       rescheduledBy: rescheduledBy ?? this.rescheduledBy,
       rescheduledAt: rescheduledAt ?? this.rescheduledAt,
       relatedDiaryKey: relatedDiaryKey ?? this.relatedDiaryKey,
+      type: type ?? this.type,
       isRescheduled: isRescheduled ?? this.isRescheduled,
       isOverdue: isOverdue ?? this.isOverdue,
     );
@@ -271,6 +277,7 @@ class RouteSheetTask extends Equatable {
     rescheduledBy,
     rescheduledAt,
     relatedDiaryKey,
+    type,
     isRescheduled,
     isOverdue,
   ];
@@ -326,6 +333,7 @@ class TaskTemplate {
   final DateTime? endDate;
   final bool isActive;
   final String? relatedDiaryKey;
+  final String? type;
 
   const TaskTemplate({
     required this.id,
@@ -339,6 +347,7 @@ class TaskTemplate {
     this.endDate,
     required this.isActive,
     this.relatedDiaryKey,
+    this.type,
   });
 
   factory TaskTemplate.fromJson(Map<String, dynamic> json) {
@@ -360,6 +369,7 @@ class TaskTemplate {
           : null,
       isActive: json['is_active'] as bool,
       relatedDiaryKey: json['related_diary_key'] as String?,
+      type: json['type'] as String?,
     );
   }
 
@@ -376,6 +386,7 @@ class TaskTemplate {
       'end_date': endDate?.toIso8601String().split('T')[0],
       'is_active': isActive,
       'related_diary_key': relatedDiaryKey,
+      'type': type,
     };
   }
 
@@ -410,6 +421,7 @@ class TaskTemplate {
     DateTime? endDate,
     bool? isActive,
     String? relatedDiaryKey,
+    String? type,
   }) {
     return TaskTemplate(
       id: id ?? this.id,
@@ -423,6 +435,7 @@ class TaskTemplate {
       endDate: endDate ?? this.endDate,
       isActive: isActive ?? this.isActive,
       relatedDiaryKey: relatedDiaryKey ?? this.relatedDiaryKey,
+      type: type ?? this.type,
     );
   }
 
@@ -622,6 +635,7 @@ class RouteSheetRepository {
     int? assignedTo,
     int? priority,
     String? relatedDiaryKey,
+    String? type,
   }) async {
     try {
       log.d('RouteSheetRepository: Создание задачи $title');
@@ -636,6 +650,7 @@ class RouteSheetRepository {
           if (assignedTo != null) 'assigned_to': assignedTo,
           if (priority != null) 'priority': priority,
           if (relatedDiaryKey != null) 'related_diary_key': relatedDiaryKey,
+          if (type != null) 'type': type,
         },
       );
 
@@ -857,6 +872,7 @@ class RouteSheetRepository {
     DateTime? endDate,
     bool isActive = true,
     String? relatedDiaryKey,
+    String? type,
   }) async {
     try {
       log.d('=== RouteSheetRepository.createTaskTemplate: НАЧАЛО ===');
@@ -869,6 +885,7 @@ class RouteSheetRepository {
       );
       log.d('  - startDate: ${startDate.toIso8601String()}');
       log.d('  - isActive: $isActive');
+      log.d('  - type: $type');
 
       final requestData = {
         'patient_id': patientId,
@@ -881,6 +898,7 @@ class RouteSheetRepository {
           'end_date': endDate.toIso8601String().split('T')[0],
         'is_active': isActive,
         if (relatedDiaryKey != null) 'related_diary_key': relatedDiaryKey,
+        if (type != null) 'type': type,
       };
 
       log.d('RouteSheetRepository: Request data: $requestData');
@@ -918,6 +936,7 @@ class RouteSheetRepository {
     DateTime? endDate,
     bool? isActive,
     String? relatedDiaryKey,
+    String? type,
   }) async {
     try {
       log.d('RouteSheetRepository: Обновление шаблона $templateId');
@@ -939,6 +958,7 @@ class RouteSheetRepository {
       if (relatedDiaryKey != null) {
         requestData['related_diary_key'] = relatedDiaryKey;
       }
+      if (type != null) requestData['type'] = type;
 
       final response = await _apiClient.put<Map<String, dynamic>>(
         '/task-templates/$templateId',
